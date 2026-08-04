@@ -49,6 +49,8 @@ The prototype opens directly without sign-in. The demo API credentials are
   forbidden commitments.
 - **Crisis Room:** transparent composite-risk gauge, feature drivers, response
   playbook, and a 108-hour replay timeline.
+- **Data Explorer:** read-only, tenant-scoped PostgreSQL table counts and row
+  previews with restricted and credential fields intentionally hidden.
 
 All visible citizen records are deterministic synthetic replay data. The UI and
 API label that provenance explicitly; no live social feed or real citizen data
@@ -56,6 +58,10 @@ is implied.
 
 Run `make smoke` for public-route checks, `make test` for backend tests, and
 `make lint` for Ruff, mypy, and import-boundary validation.
+
+For local pgAdmin access, register `127.0.0.1:5433` with database and user
+`sawtai`; the development password is defined in `.env.example`. The port is
+bound to localhost only.
 
 ## Streamlit annotation tool
 

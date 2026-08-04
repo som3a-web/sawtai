@@ -13,7 +13,6 @@ build/
 *.egg-info/
 node_modules/
 services/web/dist/
-data/
-models/
+/data/
+/models/
 evals/results/
-

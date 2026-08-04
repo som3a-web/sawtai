@@ -67,6 +67,7 @@ modules = [
   "sawtai.auth",
   "sawtai.cases",
   "sawtai.crisis",
+  "sawtai.data",
   "sawtai.ingest",
   "sawtai.nlp",
   "sawtai.rag",

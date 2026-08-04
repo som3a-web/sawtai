@@ -12,6 +12,7 @@ from sawtai.audit.routes import router as audit_router
 from sawtai.auth.routes import router as auth_router
 from sawtai.config import get_settings
 from sawtai.crisis.routes import router as crisis_router
+from sawtai.data.routes import router as data_router
 from sawtai.database import dispose_engine, engine
 from sawtai.ingest.routes import router as ingest_router
 from sawtai.logging import configure_logging
@@ -40,6 +41,7 @@ app.include_router(ingest_router)
 app.include_router(crisis_router)
 app.include_router(rag_router)
 app.include_router(audit_router)
+app.include_router(data_router)
 
 
 @app.get("/api/v1/health", tags=["ops"])

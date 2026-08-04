@@ -29,13 +29,15 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 20
     restart: unless-stopped
-    networks: [backend]
+    networks: [backend, database-admin]
 
   redis:
     image: redis:7.4.2-alpine
@@ -235,5 +237,6 @@ volumes:
 
 networks:
   frontend:
+  database-admin:
   backend:
     internal: true

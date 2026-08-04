@@ -37,6 +37,7 @@ DEMO_USER = UserContext(
             "alert:read",
             "alert:manage",
             "audit:read",
+            "data:read",
         }
     ),
 )

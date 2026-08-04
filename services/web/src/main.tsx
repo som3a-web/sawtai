@@ -4,9 +4,10 @@ import ReactECharts from "echarts-for-react";
 import { StrictMode, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
+import "./data.css";
 
 type Locale = "ar" | "en";
-type Page = "overview" | "voice" | "draft" | "crisis";
+type Page = "overview" | "voice" | "draft" | "crisis" | "data";
 
 interface OverviewData {
   window: { from: string; to: string };
@@ -81,12 +82,39 @@ interface ReplayData {
   method: string;
 }
 
+interface DataTableSummary {
+  name: string;
+  schema: string;
+  label_ar: string;
+  label_en: string;
+  description_ar: string;
+  description_en: string;
+  row_count: number;
+}
+
+interface DataTablesData {
+  database: string;
+  schema: string;
+  mode: string;
+  items: DataTableSummary[];
+}
+
+interface DataRowsData {
+  name: string;
+  label_ar: string;
+  label_en: string;
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+  mode: string;
+}
+
 const copy = {
   ar: {
     overview: "نظرة عامة",
     voice: "صوت المتعامل",
     draft: "استوديو الصياغة",
     crisis: "غرفة الأزمات",
+    data: "مستكشف البيانات",
     live: "إعادة تشغيل تجريبية",
     platform: "منصة ذكاء الاتصال الحكومي",
     title: "صوتي",
@@ -115,6 +143,7 @@ const copy = {
     voice: "Voice Explorer",
     draft: "Draft Studio",
     crisis: "Crisis Room",
+    data: "Data Explorer",
     live: "Synthetic replay",
     platform: "Government Communication Intelligence",
     title: "SawtAI",
@@ -287,15 +316,67 @@ function CrisisRoom({ locale }: { locale: Locale }) {
   );
 }
 
+function formatCell(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function DataExplorer({ locale }: { locale: Locale }) {
+  const [selectedTable, setSelectedTable] = useState("messages");
+  const tables = useQuery({
+    queryKey: ["data-tables"],
+    queryFn: () => getJson<DataTablesData>("/api/v1/data/tables"),
+  });
+  const rows = useQuery({
+    queryKey: ["data-rows", selectedTable],
+    queryFn: () => getJson<DataRowsData>(`/api/v1/data/tables/${selectedTable}?limit=50`),
+  });
+  if (!tables.data) return <LoadingCard />;
+  const selected = tables.data.items.find((item) => item.name === selectedTable);
+  const totalRows = tables.data.items.reduce((sum, item) => sum + item.row_count, 0);
+  return (
+    <div className="page-stack">
+      <header className="page-heading">
+        <div><span className="eyebrow">POSTGRESQL · TENANT SCOPED</span><h2>{copy[locale].data}</h2><p>{locale === "ar" ? "عرض مباشر وآمن للبيانات التي تشغّل المنصة" : "A safe, live view of the data powering the platform"}</p></div>
+        <div className="replay-badge"><i /> {locale === "ar" ? "قراءة فقط" : "READ ONLY"}</div>
+      </header>
+      <section className="data-summary">
+        <KpiCard label={locale === "ar" ? "قاعدة البيانات" : "Database"} value={tables.data.database} note="PostgreSQL 16" />
+        <KpiCard label={locale === "ar" ? "الجداول المتاحة" : "Available tables"} value={`${tables.data.items.length}`} note="core schema" tone="gold" />
+        <KpiCard label={locale === "ar" ? "إجمالي السجلات" : "Total records"} value={totalRows.toLocaleString(locale === "ar" ? "ar-AE" : "en-AE")} note={locale === "ar" ? "ضمن نطاق الجهة" : "tenant scoped"} tone="ink" />
+      </section>
+      <section className="data-layout">
+        <aside className="data-catalog panel">
+          <div className="data-catalog-head"><span className="eyebrow">CORE SCHEMA</span><b>{tables.data.items.length}</b></div>
+          {tables.data.items.map((table) => <button key={table.name} className={selectedTable === table.name ? "active" : ""} onClick={() => setSelectedTable(table.name)}><span><strong>{locale === "ar" ? table.label_ar : table.label_en}</strong><code>core.{table.name}</code></span><b>{table.row_count.toLocaleString(locale === "ar" ? "ar-AE" : "en-AE")}</b></button>)}
+        </aside>
+        <article className="data-preview panel">
+          <div className="data-preview-head"><div><span className="eyebrow">TABLE PREVIEW</span><h3>{locale === "ar" ? selected?.label_ar : selected?.label_en}</h3><p>{locale === "ar" ? selected?.description_ar : selected?.description_en}</p></div><code>core.{selectedTable}</code></div>
+          {rows.isLoading ? <LoadingCard /> : rows.data && rows.data.rows.length > 0 ? <div className="data-table-wrap"><table className="data-table"><thead><tr>{rows.data.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{rows.data.rows.map((row, rowIndex) => <tr key={rowIndex}>{rows.data.columns.map((column) => <td key={column}><bdi>{formatCell(row[column])}</bdi></td>)}</tr>)}</tbody></table></div> : <div className="data-empty">{locale === "ar" ? "لا توجد سجلات في هذا الجدول" : "No records in this table"}</div>}
+          <footer className="data-footer"><span>ⓘ {locale === "ar" ? "الحقول الحساسة والمخطط المقيّد غير معروضين" : "Sensitive fields and the restricted schema are hidden"}</span><b>{locale === "ar" ? "آخر 50 سجلاً" : "Latest 50 rows"}</b></footer>
+        </article>
+      </section>
+    </div>
+  );
+}
+
+function initialPage(): Page {
+  const requested = new URLSearchParams(window.location.search).get("page");
+  return requested && ["overview", "voice", "draft", "crisis", "data"].includes(requested)
+    ? requested as Page
+    : "overview";
+}
+
 function App() {
   const [locale, setLocale] = useState<Locale>("ar");
-  const [page, setPage] = useState<Page>("overview");
+  const [page, setPage] = useState<Page>(initialPage);
   const t = copy[locale];
-  const nav = useMemo(() => [{ id: "overview" as Page, icon: "⌂", label: t.overview }, { id: "voice" as Page, icon: "◉", label: t.voice }, { id: "draft" as Page, icon: "✦", label: t.draft }, { id: "crisis" as Page, icon: "△", label: t.crisis }], [t]);
+  const nav = useMemo(() => [{ id: "overview" as Page, icon: "⌂", label: t.overview }, { id: "voice" as Page, icon: "◉", label: t.voice }, { id: "draft" as Page, icon: "✦", label: t.draft }, { id: "crisis" as Page, icon: "△", label: t.crisis }, { id: "data" as Page, icon: "▦", label: t.data }], [t]);
   return (
     <div className="app" dir={locale === "ar" ? "rtl" : "ltr"}>
       <aside className="sidebar"><div className="brand"><div className="brand-mark"><i /><i /><i /></div><div><strong>{t.title}</strong><span>{t.platform}</span></div></div><nav>{nav.map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => setPage(item.id)}><span>{item.icon}</span>{item.label}{item.id === "crisis" && <b>1</b>}</button>)}</nav><div className="sidebar-foot"><div className="data-shield">◇<span>{locale === "ar" ? "البيانات داخل النطاق" : "Data stays in scope"}</span></div><small>Prototype · v0.1.0</small></div></aside>
-      <main className="main"><header className="topbar"><div className="entity"><span>ش</span><div><b>{locale === "ar" ? "بلدية الشارقة التجريبية" : "Sharjah Municipality Demo"}</b><small>{locale === "ar" ? "إدارة الاتصال الحكومي" : "Government Communication"}</small></div></div><div className="top-actions"><button className="locale" onClick={() => setLocale(locale === "ar" ? "en" : "ar")}>{locale === "ar" ? "EN" : "عربي"}</button><button className="notification">♢<b>1</b></button><div className="avatar">م</div></div></header><div className="content">{page === "overview" && <Overview locale={locale} go={setPage} />}{page === "voice" && <VoiceExplorer locale={locale} />}{page === "draft" && <DraftStudio locale={locale} />}{page === "crisis" && <CrisisRoom locale={locale} />}</div></main>
+      <main className="main"><header className="topbar"><div className="entity"><span>ش</span><div><b>{locale === "ar" ? "بلدية الشارقة التجريبية" : "Sharjah Municipality Demo"}</b><small>{locale === "ar" ? "إدارة الاتصال الحكومي" : "Government Communication"}</small></div></div><div className="top-actions"><button className="locale" onClick={() => setLocale(locale === "ar" ? "en" : "ar")}>{locale === "ar" ? "EN" : "عربي"}</button><button className="notification">♢<b>1</b></button><div className="avatar">م</div></div></header><div className="content">{page === "overview" && <Overview locale={locale} go={setPage} />}{page === "voice" && <VoiceExplorer locale={locale} />}{page === "draft" && <DraftStudio locale={locale} />}{page === "crisis" && <CrisisRoom locale={locale} />}{page === "data" && <DataExplorer locale={locale} />}</div></main>
     </div>
   );
 }
