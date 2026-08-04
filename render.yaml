@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: sawtai-prototype
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: main
+    autoDeploy: true
+    dockerContext: .
+    dockerfilePath: ./infra/render/Dockerfile
+    healthCheckPath: /api/v1/health/ready
+    envVars:
+      - key: SAWTAI_ENV
+        value: prototype
+      - key: SAWTAI_LOG_LEVEL
+        value: INFO
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sawtai-postgres
+          property: connectionString
+      - key: ALEMBIC_DATABASE_URL
+        fromDatabase:
+          name: sawtai-postgres
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: TENANT_PEPPER
+        generateValue: true
+
+databases:
+  - name: sawtai-postgres
+    databaseName: sawtai
+    user: sawtai
+    plan: free
+    region: singapore
+    postgresMajorVersion: "16"
+    ipAllowList: []

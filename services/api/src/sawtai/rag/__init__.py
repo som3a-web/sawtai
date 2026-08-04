@@ -1,0 +1,2 @@
+"""Retrieval-gated generation module."""
+

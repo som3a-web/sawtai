@@ -1,0 +1,2 @@
+"""Public ingestion-module facade."""
+

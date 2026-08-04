@@ -1,0 +1,239 @@
+name: ${COMPOSE_PROJECT_NAME:-sawtai}
+
+x-app-environment: &app-environment
+  SAWTAI_ENV: ${SAWTAI_ENV:-development}
+  SAWTAI_LOG_LEVEL: ${SAWTAI_LOG_LEVEL:-INFO}
+  DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://sawtai:change-me-for-local-development@postgres:5432/sawtai}
+  ALEMBIC_DATABASE_URL: ${ALEMBIC_DATABASE_URL:-postgresql+psycopg://sawtai:change-me-for-local-development@postgres:5432/sawtai}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+  MINIO_RAW_BUCKET: ${MINIO_RAW_BUCKET:-sawtai-raw}
+  MINIO_MEDIA_BUCKET: ${MINIO_MEDIA_BUCKET:-sawtai-media}
+  MINIO_EXPORTS_BUCKET: ${MINIO_EXPORTS_BUCKET:-sawtai-exports}
+  JWT_SECRET: ${JWT_SECRET:-local-only-insecure-jwt-secret-change-me}
+  TENANT_PEPPER: ${TENANT_PEPPER:-local-only-insecure-tenant-pepper}
+  ENCODERS_URL: ${ENCODERS_URL:-http://encoders:8001}
+  LLM_BASE_URL: ${LLM_BASE_URL:-http://llm:8000/v1}
+
+x-app-build: &app-build
+  context: .
+  dockerfile: services/api/Dockerfile
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.0-pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sawtai}
+      POSTGRES_USER: ${POSTGRES_USER:-sawtai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-for-local-development}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks: [backend]
+
+  redis:
+    image: redis:7.4.2-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks: [backend]
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-sawtai-local}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-minio-secret}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks: [backend]
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-sawtai-local}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-minio-secret}
+      MINIO_RAW_BUCKET: ${MINIO_RAW_BUCKET:-sawtai-raw}
+      MINIO_MEDIA_BUCKET: ${MINIO_MEDIA_BUCKET:-sawtai-media}
+      MINIO_EXPORTS_BUCKET: ${MINIO_EXPORTS_BUCKET:-sawtai-exports}
+    entrypoint: ["/bin/sh", "/bootstrap/init-minio.sh"]
+    volumes:
+      - ./infra/minio/init-minio.sh:/bootstrap/init-minio.sh:ro
+    restart: "no"
+    networks: [backend]
+
+  migrate:
+    build: *app-build
+    command: ["alembic", "upgrade", "head"]
+    environment: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks: [backend]
+
+  seed:
+    build: *app-build
+    command: ["python", "-m", "sawtai.seed"]
+    environment: *app-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    networks: [backend]
+
+  api:
+    build: *app-build
+    command: ["uvicorn", "sawtai.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment: *app-environment
+    volumes:
+      - ./services/api/src:/app/services/api/src
+      - ./services/api/migrations:/app/services/api/migrations
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    networks: [backend]
+
+  worker:
+    build: *app-build
+    command: ["arq", "sawtai.worker.WorkerSettings"]
+    environment: *app-environment
+    volumes:
+      - ./services/api/src:/app/services/api/src
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    networks: [backend]
+
+  encoders:
+    profiles: ["gpu"]
+    build:
+      context: services/encoders
+    environment:
+      MODEL_DEVICE: ${MODEL_DEVICE:-cuda}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+    restart: unless-stopped
+    networks: [backend]
+
+  annotation:
+    profiles: ["tools"]
+    build:
+      context: services/annotation
+    environment:
+      SAWTAI_API_URL: http://api:8000/api/v1
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [backend]
+
+  llm:
+    profiles: ["sovereign"]
+    image: vllm/vllm-openai:v0.8.5
+    command:
+      - --model
+      - ${SOVEREIGN_MODEL:-ALLaM-AI/ALLaM-7B-Instruct-preview}
+      - --quantization
+      - ${SOVEREIGN_QUANTIZATION:-awq}
+      - --gpu-memory-utilization
+      - ${VLLM_GPU_MEMORY_UTILIZATION:-0.35}
+      - --host
+      - 0.0.0.0
+    volumes:
+      - model_cache:/root/.cache/huggingface
+    restart: unless-stopped
+    networks: [backend]
+
+  web:
+    build:
+      context: services/web
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    networks: [frontend]
+
+  caddy:
+    image: caddy:2.9.1-alpine
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    networks: [frontend, backend]
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  model_cache:
+  caddy_data:
+  caddy_config:
+
+networks:
+  frontend:
+  backend:
+    internal: true

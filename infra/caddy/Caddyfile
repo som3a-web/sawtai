@@ -1,0 +1,28 @@
+{
+    auto_https off
+    admin off
+}
+
+:8080 {
+    encode zstd gzip
+
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+        -Server
+    }
+
+    handle /healthz {
+        respond "ok" 200
+    }
+
+    handle /api/* {
+        reverse_proxy api:8000
+    }
+
+    handle {
+        reverse_proxy web:3000
+    }
+}
+
