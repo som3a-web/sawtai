@@ -21,3 +21,9 @@ def test_render_database_url_is_adapted_for_sqlalchemy() -> None:
     assert postgres_url_with_driver(render_url, "psycopg") == (
         "postgresql+psycopg://sawtai:secret@database.render-internal.com/sawtai"
     )
+
+
+def test_non_postgres_url_is_not_changed() -> None:
+    assert postgres_url_with_driver("sqlite+aiosqlite:///test.db", "asyncpg") == (
+        "sqlite+aiosqlite:///test.db"
+    )

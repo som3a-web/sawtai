@@ -1,4 +1,9 @@
-.PHONY: bootstrap compose-config db-up migrate seed migrate-down api up down smoke test lint
+.PHONY: bootstrap compose-config db-up migrate seed migrate-down api up down smoke test test-integration lint check
+
+API_CHECK = docker compose run --rm --no-deps \
+	-v ./pyproject.toml:/app/pyproject.toml:ro \
+	-v ./services/api/tests:/app/services/api/tests:ro \
+	api
 
 bootstrap:
 	docker compose up -d --build postgres redis minio minio-init
@@ -36,9 +41,19 @@ smoke:
 	curl --fail --silent http://localhost:8080/api/v1/messages?limit=1 >/dev/null
 
 test:
-	docker compose run --rm api pytest
+	$(API_CHECK) pytest -q services/api/tests -m "not integration"
+
+test-integration:
+	docker compose up -d postgres redis minio minio-init
+	docker compose run --rm migrate
+	docker compose run --rm seed
+	docker compose run --rm \
+		-v ./pyproject.toml:/app/pyproject.toml:ro \
+		-v ./services/api/tests:/app/services/api/tests:ro \
+		api pytest -q services/api/tests -m integration
 
 lint:
-	docker compose run --rm api ruff check services/api/src services/api/tests
-	docker compose run --rm api mypy services/api/src
-	docker compose run --rm api lint-imports
+	$(API_CHECK) sh -c 'ruff check services/api/src services/api/tests services/api/migrations && mypy services/api/src && lint-imports'
+
+check: compose-config lint test
+	docker compose build api web

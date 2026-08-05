@@ -59,6 +59,20 @@ is implied.
 Run `make smoke` for public-route checks, `make test` for backend tests, and
 `make lint` for Ruff, mypy, and import-boundary validation.
 
+### Development quality gates
+
+- `make test` runs fast backend unit and API-contract tests.
+- `make test-integration` validates all prototype routes against the seeded PostgreSQL stack.
+- `make lint` runs Ruff, strict mypy, and domain import-boundary checks.
+- `npm --prefix services/web test` runs frontend unit tests.
+- `npm --prefix services/web run check` type-checks, tests, and builds the frontend.
+- `make check` validates Compose, backend quality gates, and production container builds.
+
+The frontend is organised by feature under `services/web/src/features`; reusable API,
+component, application, and localisation code lives in sibling top-level directories.
+Backend domain packages remain independent and access authentication, auditing, database,
+and configuration as shared platform capabilities.
+
 For local pgAdmin access, register `127.0.0.1:5433` with database and user
 `sawtai`; the development password is defined in `.env.example`. The port is
 bound to localhost only.

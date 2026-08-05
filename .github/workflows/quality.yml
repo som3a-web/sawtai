@@ -1,0 +1,64 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.5.24"
+          enable-cache: true
+      - run: uv sync --extra dev
+      - run: uv run ruff check services/api/src services/api/tests services/api/migrations
+      - run: uv run mypy services/api/src
+      - run: uv run lint-imports
+      - run: uv run pytest -q services/api/tests -m "not integration"
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: services/web/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm audit --audit-level=high
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose config --quiet
+      - run: docker compose up -d postgres redis minio minio-init
+      - run: docker compose run --rm migrate
+      - run: docker compose run --rm seed
+      - run: >-
+          docker compose run --rm --no-deps
+          -v ./pyproject.toml:/app/pyproject.toml:ro
+          -v ./services/api/tests:/app/services/api/tests:ro
+          api pytest -q services/api/tests -m integration
+      - if: always()
+        run: docker compose logs --no-color postgres redis minio
+      - if: always()
+        run: docker compose down --volumes

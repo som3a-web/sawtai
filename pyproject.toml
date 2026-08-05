@@ -48,6 +48,9 @@ known-first-party = ["sawtai"]
 testpaths = ["services/api/tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+  "integration: requires the seeded PostgreSQL development stack",
+]
 
 [tool.mypy]
 python_version = "3.12"
@@ -59,12 +62,10 @@ mypy_path = "services/api/src"
 root_packages = ["sawtai"]
 
 [[tool.importlinter.contracts]]
-name = "Business modules are independent"
+name = "Domain modules are independent"
 type = "independence"
 modules = [
   "sawtai.analytics",
-  "sawtai.audit",
-  "sawtai.auth",
   "sawtai.cases",
   "sawtai.crisis",
   "sawtai.data",

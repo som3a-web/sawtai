@@ -12,6 +12,7 @@ dist/
 build/
 *.egg-info/
 node_modules/
+*.tsbuildinfo
 services/web/dist/
 /data/
 /models/
