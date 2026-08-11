@@ -1,6 +1,7 @@
 name: ${COMPOSE_PROJECT_NAME:-sawtai}
 
 x-app-environment: &app-environment
+  PYTHONPATH: /app/services/api/src
   SAWTAI_ENV: ${SAWTAI_ENV:-development}
   SAWTAI_LOG_LEVEL: ${SAWTAI_LOG_LEVEL:-INFO}
   DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://sawtai:change-me-for-local-development@postgres:5432/sawtai}
@@ -12,8 +13,19 @@ x-app-environment: &app-environment
   MINIO_EXPORTS_BUCKET: ${MINIO_EXPORTS_BUCKET:-sawtai-exports}
   JWT_SECRET: ${JWT_SECRET:-local-only-insecure-jwt-secret-change-me}
   TENANT_PEPPER: ${TENANT_PEPPER:-local-only-insecure-tenant-pepper}
+  PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY:-local-only-insecure-pii-encryption-key}
   ENCODERS_URL: ${ENCODERS_URL:-http://encoders:8001}
   LLM_BASE_URL: ${LLM_BASE_URL:-http://llm:8000/v1}
+  WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+  WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+  WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+  WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+  WHATSAPP_SIGNATURE_REQUIRED: ${WHATSAPP_SIGNATURE_REQUIRED:-true}
+  WHATSAPP_DELIVERY_MODE: ${WHATSAPP_DELIVERY_MODE:-simulate}
+  WHATSAPP_REPLY_MODE: ${WHATSAPP_REPLY_MODE:-draft}
+  WHATSAPP_TENANT_CODE: ${WHATSAPP_TENANT_CODE:-shj-demo}
+  WHATSAPP_SOURCE_HANDLE: ${WHATSAPP_SOURCE_HANDLE:-demo-whatsapp}
+  RAG_LEXICAL_GATE: ${RAG_LEXICAL_GATE:-0.18}
 
 x-app-build: &app-build
   context: .

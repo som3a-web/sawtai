@@ -19,11 +19,13 @@ CHANNELS = {
     "x": UUID("00000000-0000-0000-0000-000000000401"),
     "email": UUID("00000000-0000-0000-0000-000000000402"),
     "survey": UUID("00000000-0000-0000-0000-000000000403"),
+    "whatsapp": UUID("00000000-0000-0000-0000-000000000404"),
 }
 SOURCES = {
     "x": UUID("00000000-0000-0000-0000-000000000501"),
     "email": UUID("00000000-0000-0000-0000-000000000502"),
     "survey": UUID("00000000-0000-0000-0000-000000000503"),
+    "whatsapp": UUID("00000000-0000-0000-0000-000000000504"),
 }
 TOPICS = {
     "waste": UUID("00000000-0000-0000-0000-000000000701"),
@@ -145,11 +147,20 @@ def seed_static(connection: object) -> None:
         )
 
     channel_rows = [
-        ("x", "social", "إكس", "X", True),
-        ("email", "email", "البريد الإلكتروني", "Email", False),
-        ("survey", "survey", "الاستبيانات", "Surveys", False),
+        ("x", "social", "إكس", "X", True, "replay", "demo-x"),
+        ("email", "email", "البريد الإلكتروني", "Email", False, "replay", "demo-email"),
+        ("survey", "survey", "الاستبيانات", "Surveys", False, "replay", "demo-survey"),
+        (
+            "whatsapp",
+            "social",
+            "واتساب",
+            "WhatsApp",
+            False,
+            "meta_whatsapp",
+            "demo-whatsapp",
+        ),
     ]
-    for code, kind, name_ar, name_en, is_public in channel_rows:
+    for code, kind, name_ar, name_en, is_public, adapter, handle in channel_rows:
         execute(
             text(
                 """
@@ -173,7 +184,7 @@ def seed_static(connection: object) -> None:
             text(
                 """
                 INSERT INTO core.sources (source_id, tenant_id, channel_id, adapter, config, handle)
-                VALUES (:id, :tenant, :channel, 'replay', '{"speed": 8}', :handle)
+                VALUES (:id, :tenant, :channel, :adapter, '{"speed": 8}', :handle)
                 ON CONFLICT (source_id) DO NOTHING
                 """
             ),
@@ -181,7 +192,8 @@ def seed_static(connection: object) -> None:
                 "id": SOURCES[code],
                 "tenant": TENANT_ID,
                 "channel": CHANNELS[code],
-                "handle": f"demo-{code}",
+                "adapter": adapter,
+                "handle": handle,
             },
         )
 
@@ -265,6 +277,57 @@ def seed_static(connection: object) -> None:
             "id": playbook_id,
             "tenant": TENANT_ID,
             "steps": '[{"seq":1,"action_ar":"إبلاغ مدير الإدارة","owner_role":"dept_head"},{"seq":2,"action_ar":"إعداد بيان أولي","owner_role":"comms_officer"}]',
+        },
+    )
+
+    document_id = UUID("00000000-0000-0000-0000-000000000d01")
+    chunk_id = UUID("00000000-0000-0000-0000-000000000e01")
+    policy_text = (
+        "تستقبل البلدية بلاغات تأخر جمع النفايات على مدار الساعة. "
+        "يُسجّل البلاغ فور استلامه ويُحال إلى الفريق المختص، وتتم متابعة الحالة وفق "
+        "جدول الخدمة المعتمد. يجب تزويد البلدية برقم مرجع الطلب عند طلب متابعة حالة محددة."
+    )
+    execute(
+        text(
+            """
+            INSERT INTO core.documents (
+                document_id, tenant_id, kind, title_ar, title_en, lang,
+                version, effective_from, is_approved, approved_by, object_key, sha256
+            ) VALUES (
+                :document_id, :tenant_id, 'service_guide',
+                'دليل بلاغات جمع النفايات', 'Waste Collection Reports Guide', 'ar',
+                '1', '2026-01-01', true, :approved_by,
+                'seed/policies/waste-collection-guide-v1.pdf', :sha256
+            ) ON CONFLICT (document_id) DO NOTHING
+            """
+        ),
+        {
+            "document_id": document_id,
+            "tenant_id": TENANT_ID,
+            "approved_by": USER_ID,
+            "sha256": hashlib.sha256(policy_text.encode()).digest(),
+        },
+    )
+    execute(
+        text(
+            """
+            INSERT INTO core.doc_chunks (
+                chunk_id, tenant_id, document_id, seq, heading_path, text,
+                norm_text, token_count, lang, embedding, tsv
+            ) VALUES (
+                :chunk_id, :tenant_id, :document_id, 1,
+                'خدمات النفايات > البلاغات والمتابعة', :text, :norm_text,
+                54, 'ar', array_fill(0.0::real, ARRAY[1024])::vector,
+                to_tsvector('simple', :norm_text)
+            ) ON CONFLICT (chunk_id) DO NOTHING
+            """
+        ),
+        {
+            "chunk_id": chunk_id,
+            "tenant_id": TENANT_ID,
+            "document_id": document_id,
+            "text": policy_text,
+            "norm_text": policy_text,
         },
     )
     execute(

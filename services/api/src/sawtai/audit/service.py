@@ -18,6 +18,7 @@ async def write_audit(
     action: str,
     object_type: str,
     object_id: str | None,
+    actor_type: str = "user",
     outcome: str = "success",
     before_state: dict[str, Any] | None = None,
     after_state: dict[str, Any] | None = None,
@@ -35,6 +36,7 @@ async def write_audit(
         {
             "tenant_id": tenant_id,
             "actor_user_id": actor_user_id,
+            "actor_type": actor_type,
             "action": action,
             "object_type": object_type,
             "object_id": object_id,
@@ -53,7 +55,7 @@ async def write_audit(
                 object_type, object_id, outcome, before_state, after_state,
                 prev_hash, row_hash
             ) VALUES (
-                :tenant_id, :occurred_at, :actor_user_id, 'user', :action,
+                :tenant_id, :occurred_at, :actor_user_id, :actor_type, :action,
                 :object_type, :object_id, :outcome,
                 CAST(:before_state AS jsonb), CAST(:after_state AS jsonb),
                 :prev_hash, :row_hash
@@ -64,6 +66,7 @@ async def write_audit(
             "tenant_id": UUID(tenant_id),
             "occurred_at": occurred_at,
             "actor_user_id": UUID(actor_user_id) if actor_user_id else None,
+            "actor_type": actor_type,
             "action": action,
             "object_type": object_type,
             "object_id": UUID(object_id) if object_id else None,

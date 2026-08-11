@@ -51,6 +51,10 @@ The prototype opens directly without sign-in. The demo API credentials are
   playbook, and a 108-hour replay timeline.
 - **Data Explorer:** read-only, tenant-scoped PostgreSQL table counts and row
   previews with restricted and credential fields intentionally hidden.
+- **WhatsApp channel:** signed Meta webhook ingestion, request-boundary PII
+  protection, Redis worker processing, grounded response drafts, operator
+  approval, and simulated or live outbound delivery. See
+  [`BACKEND-WHATSAPP.md`](./BACKEND-WHATSAPP.md).
 
 All visible citizen records are deterministic synthetic replay data. The UI and
 API label that provenance explicitly; no live social feed or real citizen data

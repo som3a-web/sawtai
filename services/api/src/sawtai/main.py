@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sawtai.analytics.routes import router as analytics_router
 from sawtai.audit.routes import router as audit_router
 from sawtai.auth.routes import router as auth_router
+from sawtai.channels.routes import router as channels_router
 from sawtai.config import get_settings
 from sawtai.crisis.routes import router as crisis_router
 from sawtai.data.routes import router as data_router
@@ -36,6 +37,7 @@ app = FastAPI(
 )
 
 app.include_router(auth_router)
+app.include_router(channels_router)
 app.include_router(analytics_router)
 app.include_router(ingest_router)
 app.include_router(crisis_router)
