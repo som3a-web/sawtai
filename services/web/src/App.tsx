@@ -11,6 +11,7 @@ import { copy } from "./i18n/copy";
 
 const Overview = lazy(() => import("./features/overview/Overview").then((module) => ({ default: module.Overview })));
 const WhatsAppHub = lazy(() => import("./features/whatsapp/WhatsAppHub").then((module) => ({ default: module.WhatsAppHub })));
+const CaseWorkspace = lazy(() => import("./features/cases/CaseWorkspace").then((module) => ({ default: module.CaseWorkspace })));
 const VoiceExplorer = lazy(() => import("./features/voice/VoiceExplorer").then((module) => ({ default: module.VoiceExplorer })));
 const DraftStudio = lazy(() => import("./features/draft/DraftStudio").then((module) => ({ default: module.DraftStudio })));
 const CrisisRoom = lazy(() => import("./features/crisis/CrisisRoom").then((module) => ({ default: module.CrisisRoom })));
@@ -52,6 +53,7 @@ export function App() {
   const nav = useMemo(() => user ? [
     { id: "overview" as Page, icon: "⌂", label: t.overview, permission: "analytics:read" },
     { id: "whatsapp" as Page, icon: "◌", label: t.whatsapp, permission: "message:read" },
+    { id: "cases" as Page, icon: "◇", label: t.cases, permission: "case:read" },
     { id: "voice" as Page, icon: "◉", label: t.voice, permission: "message:read" },
     { id: "draft" as Page, icon: "✦", label: t.draft, permission: "draft:create" },
     { id: "crisis" as Page, icon: "△", label: t.crisis, permission: "alert:read" },
@@ -76,7 +78,7 @@ export function App() {
   return (
     <div className="app" dir={locale === "ar" ? "rtl" : "ltr"}>
       <aside className="sidebar"><div className="brand"><div className="brand-mark"><i /><i /><i /></div><div><strong>{t.title}</strong><span>{t.platform}</span></div></div><nav>{nav.map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => setPage(item.id)}><span>{item.icon}</span>{item.label}{item.id === "crisis" && <b>1</b>}</button>)}</nav><div className="sidebar-foot"><div className="data-shield">◇<span>{locale === "ar" ? "البيانات داخل النطاق" : "Data stays in scope"}</span></div><small>Prototype · v0.2.0</small></div></aside>
-      <main className="main"><header className="topbar"><div className="entity"><span>ش</span><div><b>{locale === "ar" ? "بلدية الشارقة التجريبية" : "Sharjah Municipality Demo"}</b><small>{locale === "ar" ? "إدارة الاتصال الحكومي" : "Government Communication"}</small></div></div><div className="top-actions"><button className="locale" onClick={() => setLocale(locale === "ar" ? "en" : "ar")}>{locale === "ar" ? "EN" : "عربي"}</button><button className="notification">♢<b>1</b></button><div className="profile-chip"><div className="avatar">{displayName.slice(0, 1)}</div><span><b>{displayName}</b><small>{user.roles.join(" · ")}</small></span><button onClick={() => void signOut()}>{locale === "ar" ? "خروج" : "Sign out"}</button></div></div></header><div className="content"><Suspense fallback={<LoadingCard />}>{page === "overview" && <Overview locale={locale} go={setPage} />}{page === "whatsapp" && <WhatsAppHub locale={locale} user={user} />}{page === "voice" && <VoiceExplorer locale={locale} />}{page === "draft" && <DraftStudio locale={locale} />}{page === "crisis" && <CrisisRoom locale={locale} />}{page === "data" && <DataExplorer locale={locale} />}{page === "admin" && <UserAdministration locale={locale} />}</Suspense></div></main>
+      <main className="main"><header className="topbar"><div className="entity"><span>ش</span><div><b>{locale === "ar" ? "بلدية الشارقة التجريبية" : "Sharjah Municipality Demo"}</b><small>{locale === "ar" ? "إدارة الاتصال الحكومي" : "Government Communication"}</small></div></div><div className="top-actions"><button className="locale" onClick={() => setLocale(locale === "ar" ? "en" : "ar")}>{locale === "ar" ? "EN" : "عربي"}</button><button className="notification">♢<b>1</b></button><div className="profile-chip"><div className="avatar">{displayName.slice(0, 1)}</div><span><b>{displayName}</b><small>{user.roles.join(" · ")}</small></span><button onClick={() => void signOut()}>{locale === "ar" ? "خروج" : "Sign out"}</button></div></div></header><div className="content"><Suspense fallback={<LoadingCard />}>{page === "overview" && <Overview locale={locale} go={setPage} />}{page === "whatsapp" && <WhatsAppHub locale={locale} user={user} go={setPage} />}{page === "cases" && <CaseWorkspace locale={locale} user={user} />}{page === "voice" && <VoiceExplorer locale={locale} />}{page === "draft" && <DraftStudio locale={locale} />}{page === "crisis" && <CrisisRoom locale={locale} />}{page === "data" && <DataExplorer locale={locale} />}{page === "admin" && <UserAdministration locale={locale} />}</Suspense></div></main>
     </div>
   );
 }

@@ -62,6 +62,9 @@ all use the password `SawtAI-2026!`:
   protection, Redis worker processing, grounded response drafts, operator
   submission, independent maker-checker approval, and simulated or live
   outbound delivery. See [`BACKEND-WHATSAPP.md`](./BACKEND-WHATSAPP.md).
+- **Case Management:** automatic conversion of WhatsApp complaints into
+  taxonomy-routed cases, server-side SLA clocks, assignment, controlled status
+  transitions, escalation, internal notes, and append-only history.
 
 All visible citizen records are deterministic synthetic replay data. The UI and
 API label that provenance explicitly; no live social feed or real citizen data

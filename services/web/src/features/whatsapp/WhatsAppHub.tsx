@@ -10,6 +10,7 @@ import type {
   WhatsAppStatusData,
 } from "../../api/types";
 import type { Locale } from "../../app/types";
+import type { Page } from "../../app/types";
 import { LoadingCard } from "../../components/LoadingCard";
 
 type QueueFilter = "all" | "needs_review" | "published";
@@ -33,7 +34,7 @@ function itemTone(item: WhatsAppInboxItem) {
   return "ready";
 }
 
-export function WhatsAppHub({ locale, user }: { locale: Locale; user: AuthUser }) {
+export function WhatsAppHub({ locale, user, go }: { locale: Locale; user: AuthUser; go: (page: Page) => void }) {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<QueueFilter>("all");
@@ -172,6 +173,7 @@ export function WhatsAppHub({ locale, user }: { locale: Locale; user: AuthUser }
         <main className="wa-conversation panel">
           {selected ? <>
             <header className="wa-conversation-head"><div className="wa-citizen-avatar large">{selected.author_pseudonym.trim().slice(-1).toUpperCase()}</div><div><h3>{citizenLabel(selected, locale)}</h3><p>{locale === "ar" ? "معرّف مشفّر · بيانات شخصية محمية" : "Encrypted identity · personal data protected"}</p></div><span className={`wa-status ${itemTone(selected)}`}>{statusLabel(selected, locale)}</span></header>
+            {selected.case_reference && <button className="wa-linked-case" onClick={() => go("cases")}><span>◇</span><div><small>{locale === "ar" ? "حالة مرتبطة تلقائياً" : "Automatically linked case"}</small><b>{selected.case_reference}</b></div><em>{locale === "ar" ? "فتح الحالة ←" : "Open case →"}</em></button>}
             <div className="wa-thread">
               <div className="wa-message citizen"><span>{locale === "ar" ? "رسالة المتعامل" : "Citizen message"}</span><p><bdi>{selected.raw_text}</bdi></p><time>{new Date(selected.occurred_at).toLocaleTimeString(locale === "ar" ? "ar-AE" : "en-AE", { hour: "2-digit", minute: "2-digit" })}</time></div>
               {selected.abstained ? <div className="wa-abstain"><strong>!</strong><div><b>{locale === "ar" ? "توقف الذكاء الاصطناعي بأمان" : "AI safely abstained"}</b><p>{locale === "ar" ? "لم يجد النظام مصدراً معتمداً كافياً. يجب كتابة الرد يدوياً أو إحالة المحادثة." : "No sufficiently relevant approved source was found. Write manually or escalate."}</p></div></div> : selected.response_id ? <div className="wa-draft-block"><div className="wa-ai-label"><span>✦</span><div><b>{locale === "ar" ? "رد مقترح من صوتي" : "SawtAI suggested reply"}</b><small>{isPending ? (locale === "ar" ? "مقفل بانتظار اعتماد شخص آخر" : "Locked for independent approval") : (locale === "ar" ? "يمكنك التعديل قبل الإرسال للاعتماد" : "Editable before submission")}</small></div><em>{Math.round((selected.grounding_score ?? 0) * 100)}% {locale === "ar" ? "موثوقية" : "grounded"}</em></div><textarea value={draft} onChange={(event) => { setDraft(event.target.value); setNotice(""); }} disabled={!canEdit} aria-label={locale === "ar" ? "نص الرد المقترح" : "Suggested reply text"} /><div className="wa-editor-meta"><span>{draft.length} / 4000</span><span>✓ {locale === "ar" ? "لا تظهر بيانات شخصية" : "No visible PII"}</span><span>✓ {locale === "ar" ? "لهجة عربية رسمية" : "Official Arabic tone"}</span></div></div> : <div className="wa-processing"><i /><span>{locale === "ar" ? "يتم تحليل الرسالة وإعداد الرد" : "Analyzing message and preparing reply"}</span></div>}

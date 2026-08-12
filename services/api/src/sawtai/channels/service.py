@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sawtai.audit.service import write_audit
+from sawtai.cases.service import create_case_from_message
 from sawtai.channels.models import WhatsAppMessage, WhatsAppMetadata, WhatsAppStatus
 from sawtai.channels.whatsapp import WhatsAppClient, WhatsAppDeliveryError
 from sawtai.config import Settings
@@ -76,6 +77,7 @@ async def list_whatsapp_inbox(
                        reply.abstain_reason, reply.policy_flags,
                        reply.published_ref, reply.created_at AS reply_created_at,
                        reply.created_by, reply.edited_by, reply.submitted_at,
+                       complaint.case_id, complaint.reference AS case_reference,
                        COALESCE(citations.items, '[]'::jsonb) AS citations
                 FROM core.messages m
                 JOIN core.channels c ON c.channel_id = m.channel_id
@@ -93,6 +95,15 @@ async def list_whatsapp_inbox(
                     ORDER BY i.created_at DESC
                     LIMIT 1
                 ) reply ON true
+                LEFT JOIN LATERAL (
+                    SELECT cp.case_id, cs.reference
+                    FROM core.complaints cp
+                    JOIN core.cases cs ON cs.case_id = cp.case_id
+                    WHERE cp.tenant_id = m.tenant_id
+                      AND cp.message_id = m.message_id
+                      AND cp.occurred_at = m.occurred_at
+                    LIMIT 1
+                ) complaint ON true
                 LEFT JOIN LATERAL (
                     SELECT jsonb_agg(
                         jsonb_build_object(
@@ -375,6 +386,25 @@ async def process_persisted_whatsapp_message(
             language="en" if language == "en" else "ar",
             retrieval_gate=settings.rag_lexical_gate,
         )
+    case_id = await create_case_from_message(
+        session,
+        tenant_id=persisted["tenant_id"],
+        message_id=persisted["message_id"],
+        occurred_at=persisted["occurred_at"],
+        raw_text=persisted["raw_text"],
+    )
+    if generated is not None:
+        await session.execute(
+            text(
+                "UPDATE core.responses SET case_id = :case_id "
+                "WHERE response_id = :response_id AND tenant_id = :tenant_id"
+            ),
+            {
+                "case_id": case_id,
+                "response_id": generated.response_id,
+                "tenant_id": persisted["tenant_id"],
+            },
+        )
     await write_audit(
         session,
         tenant_id=str(persisted["tenant_id"]),
@@ -387,6 +417,7 @@ async def process_persisted_whatsapp_message(
             "channel": "whatsapp",
             "draft_created": generated is not None,
             "abstained": generated.abstained if generated else None,
+            "case_id": str(case_id),
         },
     )
     acknowledgement_id = None

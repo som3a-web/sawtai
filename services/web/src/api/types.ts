@@ -135,6 +135,8 @@ export interface WhatsAppInboxItem {
   created_by: string | null;
   edited_by: string | null;
   submitted_at: string | null;
+  case_id: string | null;
+  case_reference: string | null;
   citations: WhatsAppCitation[];
 }
 
@@ -187,4 +189,62 @@ export interface RoleRecord {
   name_ar: string;
   name_en: string;
   permissions: string[];
+}
+
+export type CaseStatus = "new" | "triaged" | "assigned" | "awaiting_response" | "responded" | "resolved" | "closed" | "rejected";
+export type CaseSeverity = "low" | "medium" | "high" | "critical";
+export type SlaState = "on_track" | "due_soon" | "breached" | "completed" | "not_set";
+
+export interface CaseItem {
+  case_id: string;
+  reference: string;
+  title_ar: string;
+  title_en: string;
+  status: CaseStatus;
+  severity: CaseSeverity;
+  sla_due_at: string | null;
+  sla_state: SlaState;
+  sla_remaining_seconds: number | null;
+  first_response_at: string | null;
+  resolved_at: string | null;
+  complaint_count: number;
+  created_at: string;
+  updated_at: string;
+  node_id: string | null;
+  taxonomy_code: string | null;
+  taxonomy_label_ar: string | null;
+  taxonomy_label_en: string | null;
+  sla_hours: number | null;
+  org_name_ar: string | null;
+  org_name_en: string | null;
+  assigned_to: string | null;
+  assignee_name_ar: string | null;
+  assignee_name_en: string | null;
+}
+
+export interface CaseListData {
+  items: CaseItem[];
+  summary: { total: number; open: number; breached: number; unassigned: number; critical: number };
+}
+
+export interface CaseHistoryItem {
+  audit_id: string;
+  occurred_at: string;
+  action: string;
+  outcome: string;
+  before_state: Record<string, unknown> | null;
+  after_state: Record<string, unknown> | null;
+  actor_name_ar: string | null;
+  actor_name_en: string | null;
+}
+
+export interface CaseDetail extends CaseItem {
+  history: CaseHistoryItem[];
+  responses: Array<{ response_id: string; kind: string; status: string; body: string; grounding_score: number | null; created_at: string; approved_at: string | null; published_at: string | null }>;
+  allowed_transitions: CaseStatus[];
+}
+
+export interface CaseMetadata {
+  taxonomy: Array<{ node_id: string; code: string; label_ar: string; label_en: string; sla_hours: number | null }>;
+  assignees: Array<{ user_id: string; display_name_ar: string; display_name_en: string; roles: string[] }>;
 }

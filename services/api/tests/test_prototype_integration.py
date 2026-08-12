@@ -2,6 +2,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from sawtai.channels.models import WhatsAppMessage, WhatsAppMetadata
 from sawtai.channels.service import (
@@ -37,6 +38,7 @@ def test_auth_sessions_and_least_privilege_roles() -> None:
         admin_headers = {"Authorization": f"Bearer {administrator.json()['access_token']}"}
         assert client.get("/api/v1/users", headers=admin_headers).status_code == 200
         assert client.get("/api/v1/channels/whatsapp/inbox", headers=admin_headers).status_code == 403
+        assert client.get("/api/v1/cases", headers=admin_headers).status_code == 403
         assert client.post("/api/v1/auth/refresh").status_code == 200
         assert client.post("/api/v1/auth/logout").status_code == 204
         assert client.post("/api/v1/auth/refresh").status_code == 401
@@ -52,6 +54,7 @@ def test_seeded_read_routes() -> None:
                 "/api/v1/messages?limit=3",
                 "/api/v1/search/documents",
                 "/api/v1/channels/whatsapp/inbox?limit=3",
+                "/api/v1/cases?limit=3",
             ),
             "crisis@sawtai.ae": ("/api/v1/alerts", "/api/v1/forecast/replay"),
             "dpo@sawtai.ae": (
@@ -67,6 +70,78 @@ def test_seeded_read_routes() -> None:
             for path in paths:
                 response = client.post(path, headers=headers) if path == "/api/v1/search/documents" else client.get(path, headers=headers)
                 assert response.status_code == 200, f"{path}: {response.text}"
+
+
+def test_case_creation_routing_assignment_and_lifecycle() -> None:
+    with TestClient(app) as client:
+        login = client.post(
+            "/api/v1/auth/token",
+            json={"email": "officer@sawtai.ae", "password": "SawtAI-2026!"},
+        )
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        metadata = client.get("/api/v1/cases/metadata", headers=headers)
+        assert metadata.status_code == 200
+        taxonomy = metadata.json()["taxonomy"][0]
+        assignee = metadata.json()["assignees"][0]
+
+        created = client.post(
+            "/api/v1/cases",
+            headers=headers,
+            json={
+                "title_ar": "اختبار دورة حياة الحالة",
+                "title_en": "Case lifecycle integration test",
+                "node_id": taxonomy["node_id"],
+                "severity": "medium",
+            },
+        )
+        assert created.status_code == 201, created.text
+        case_id = created.json()["case_id"]
+        detail = client.get(f"/api/v1/cases/{case_id}", headers=headers)
+        assert detail.status_code == 200
+        assert detail.json()["status"] == "new"
+        assert detail.json()["sla_due_at"] is not None
+        assert detail.json()["org_unit_id"] is not None
+
+        triaged = client.post(
+            f"/api/v1/cases/{case_id}/status",
+            headers=headers,
+            json={"status": "triaged", "note": "Validated by integration test"},
+        )
+        assert triaged.status_code == 200
+        assigned = client.post(
+            f"/api/v1/cases/{case_id}/assign",
+            headers=headers,
+            json={"assigned_to": assignee["user_id"]},
+        )
+        assert assigned.status_code == 200
+        noted = client.post(
+            f"/api/v1/cases/{case_id}/notes",
+            headers=headers,
+            json={"note": "Internal follow-up recorded"},
+        )
+        assert noted.status_code == 200
+        escalated = client.post(
+            f"/api/v1/cases/{case_id}/escalate",
+            headers=headers,
+            json={"reason": "Urgent service impact"},
+        )
+        assert escalated.status_code == 200
+
+        for next_status in ("awaiting_response", "responded", "resolved", "closed"):
+            changed = client.post(
+                f"/api/v1/cases/{case_id}/status",
+                headers=headers,
+                json={"status": next_status},
+            )
+            assert changed.status_code == 200, changed.text
+
+        final = client.get(f"/api/v1/cases/{case_id}", headers=headers).json()
+        assert final["status"] == "closed"
+        assert final["severity"] == "critical"
+        assert final["first_response_at"] is not None
+        assert final["resolved_at"] is not None
+        actions = {event["action"] for event in final["history"]}
+        assert {"case.create", "case.assign", "case.note", "case.escalate", "case.status"} <= actions
 
 
 def test_draft_stream_has_grounding_and_completion_events() -> None:
@@ -118,6 +193,22 @@ async def test_whatsapp_message_to_approved_delivery_flow() -> None:
     assert result.message_id is not None
     assert result.response_id is not None
     assert result.status == "draft_ready"
+
+    async with session_factory() as session:
+        linked_case = (
+            await session.execute(
+                text(
+                    """
+                    SELECT r.case_id
+                    FROM core.responses r
+                    JOIN core.complaints c ON c.case_id = r.case_id
+                    WHERE r.response_id = :response_id AND c.message_id = :message_id
+                    """
+                ),
+                {"response_id": result.response_id, "message_id": result.message_id},
+            )
+        ).scalar_one_or_none()
+    assert linked_case is not None
 
     async with session_factory() as session:
         updated = await update_whatsapp_reply(

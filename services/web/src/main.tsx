@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
 import "./data.css";
+import "./cases.css";
 import "./styles.css";
 import "./whatsapp.css";
 

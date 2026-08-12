@@ -151,21 +151,21 @@ def seed_static(connection: object) -> None:
             "comms_officer",
             "Communication Officer",
             "مسؤول الاتصال",
-            '["analytics:read","message:read","message:review","draft:create","draft:edit","draft:submit"]',
+            '["analytics:read","message:read","message:review","draft:create","draft:edit","draft:submit","case:read","case:write"]',
         ),
         (
             UUID("00000000-0000-0000-0000-000000000306"),
             "dept_head",
             "Department Head",
             "رئيس القسم",
-            '["analytics:read","message:read","message:review","draft:create","draft:edit","draft:submit","draft:approve"]',
+            '["analytics:read","message:read","message:review","draft:create","draft:edit","draft:submit","draft:approve","case:read","case:write"]',
         ),
         (
             UUID("00000000-0000-0000-0000-000000000302"),
             "crisis_lead",
             "Crisis Lead",
             "مسؤول الأزمات",
-            '["analytics:read","alert:read","alert:manage"]',
+            '["analytics:read","alert:read","alert:manage","case:read","case:write"]',
         ),
         (
             UUID("00000000-0000-0000-0000-000000000303"),
@@ -623,6 +623,54 @@ def seed_workflow(connection: object) -> None:
         ),
         {"id": case_id, "tenant": TENANT_ID, "node": NODES["waste"], "org": ORG_ID, "user": USER_ID},
     )
+    case_samples = (
+        (
+            UUID("00000000-0000-0000-0000-000000000a02"),
+            "SHJ-2026-004219", "حفرة خطرة عند مدخل الحي", "Dangerous pothole at neighbourhood entrance",
+            NODES["roads"], "triaged", "high", "2026-08-12 14:00:00+00", None, 6,
+        ),
+        (
+            UUID("00000000-0000-0000-0000-000000000a03"),
+            "SHJ-2026-004233", "تعطل ألعاب الأطفال في الحديقة", "Children's playground equipment unavailable",
+            NODES["parks"], "assigned", "medium", "2026-08-13 12:00:00+00", USER_ID, 3,
+        ),
+        (
+            UUID("00000000-0000-0000-0000-000000000a04"),
+            "SHJ-2026-004241", "تأخر تحديث معاملة تصريح", "Delayed permit application update",
+            NODES["permits"], "awaiting_response", "high", "2026-08-12 18:00:00+00", APPROVER_USER_ID, 9,
+        ),
+        (
+            UUID("00000000-0000-0000-0000-000000000a05"),
+            "SHJ-2026-004245", "تراكم نفايات يستدعي تدخلاً عاجلاً", "Urgent waste accumulation requiring intervention",
+            NODES["waste"], "assigned", "critical", "2026-08-12 16:00:00+00", CRISIS_USER_ID, 18,
+        ),
+    )
+    for sample in case_samples:
+        (
+            sample_id, reference, title_ar, title_en, node_id, status_value,
+            severity, sla_due_at, assignee, complaint_count,
+        ) = sample
+        execute(
+            text(
+                """
+                INSERT INTO core.cases (
+                    case_id, tenant_id, reference, title_ar, title_en, node_id,
+                    org_unit_id, assigned_to, status, severity, sla_due_at, complaint_count
+                ) VALUES (
+                    :id, :tenant, :reference, :title_ar, :title_en, :node,
+                    :org, :assignee, CAST(:status AS core.case_status),
+                    CAST(:severity AS core.complaint_severity), :sla_due_at, :complaint_count
+                ) ON CONFLICT (case_id) DO NOTHING
+                """
+            ),
+            {
+                "id": sample_id, "tenant": TENANT_ID, "reference": reference,
+                "title_ar": title_ar, "title_en": title_en, "node": node_id,
+                "org": ORG_ID, "assignee": assignee, "status": status_value,
+                "severity": severity, "sla_due_at": sla_due_at,
+                "complaint_count": complaint_count,
+            },
+        )
     execute(
         text(
             """
@@ -684,6 +732,7 @@ def seed_whatsapp_workspace(connection: object) -> None:
             "score": 0.95,
             "abstained": False,
             "published_ref": None,
+            "case_id": UUID("00000000-0000-0000-0000-000000000a05"),
         },
         {
             "key": "published",
@@ -698,6 +747,7 @@ def seed_whatsapp_workspace(connection: object) -> None:
             "score": 0.92,
             "abstained": False,
             "published_ref": "simulated:seed-published",
+            "case_id": UUID("00000000-0000-0000-0000-000000000a01"),
         },
         {
             "key": "review",
@@ -709,6 +759,7 @@ def seed_whatsapp_workspace(connection: object) -> None:
             "score": 0.0,
             "abstained": True,
             "published_ref": None,
+            "case_id": UUID("00000000-0000-0000-0000-000000000a04"),
         },
     )
     for sample in samples:
@@ -735,6 +786,28 @@ def seed_whatsapp_workspace(connection: object) -> None:
                 "sender": sample["sender"],
                 "encryption_key": encryption_key,
                 "occurred_at": sample["occurred_at"],
+            },
+        )
+        execute(
+            text(
+                """
+                INSERT INTO core.complaints (
+                    complaint_id, tenant_id, message_id, occurred_at, node_id,
+                    severity, issue_summary_ar, issue_summary_en, case_id
+                ) VALUES (
+                    :complaint_id, :tenant_id, :message_id, :occurred_at,
+                    :node_id, 'high', :summary_ar, 'WhatsApp service request', :case_id
+                ) ON CONFLICT (complaint_id) DO NOTHING
+                """
+            ),
+            {
+                "complaint_id": stable_uuid(f"whatsapp-complaint-{sample['key']}"),
+                "tenant_id": TENANT_ID,
+                "message_id": message_id,
+                "occurred_at": sample["occurred_at"],
+                "node_id": NODES["waste"] if sample["key"] != "review" else NODES["permits"],
+                "summary_ar": sample["text"],
+                "case_id": sample["case_id"],
             },
         )
         execute(
@@ -797,13 +870,13 @@ def seed_whatsapp_workspace(connection: object) -> None:
             text(
                 """
                 INSERT INTO core.responses (
-                    response_id, tenant_id, kind, lang, audience, body, status,
+                    response_id, tenant_id, case_id, kind, lang, audience, body, status,
                     generated_by_model, model_version, prompt_version,
                     inference_run_id, grounding_score, policy_flags, abstained,
                     abstain_reason, created_by, edited_by, approved_by,
                     approved_at, published_at, published_ref
                 ) VALUES (
-                    :response_id, :tenant_id, 'reply', 'ar', 'citizen', :body,
+                    :response_id, :tenant_id, :case_id, 'reply', 'ar', 'citizen', :body,
                     CAST(:status AS core.response_status), 'grounded-template', 'v1',
                     'whatsapp-grounded-v1', :inference_id, :score, '[]', :abstained,
                     :abstain_reason, :created_by, :created_by, :approved_by, :approved_at, :published_at,
@@ -811,12 +884,14 @@ def seed_whatsapp_workspace(connection: object) -> None:
                 ) ON CONFLICT (response_id) DO UPDATE SET
                     created_by = COALESCE(core.responses.created_by, EXCLUDED.created_by),
                     edited_by = COALESCE(core.responses.edited_by, EXCLUDED.edited_by),
-                    approved_by = COALESCE(core.responses.approved_by, EXCLUDED.approved_by)
+                    approved_by = COALESCE(core.responses.approved_by, EXCLUDED.approved_by),
+                    case_id = COALESCE(core.responses.case_id, EXCLUDED.case_id)
                 """
             ),
             {
                 "response_id": response_id,
                 "tenant_id": TENANT_ID,
+                "case_id": sample["case_id"],
                 "body": sample["body"],
                 "status": sample["status"],
                 "inference_id": inference_id,
