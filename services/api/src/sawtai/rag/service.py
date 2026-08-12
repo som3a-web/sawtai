@@ -136,7 +136,7 @@ async def list_documents(
                 ) creator ON true
                 LEFT JOIN core.users approver ON approver.user_id = d.approved_by
                 WHERE d.tenant_id = :tenant_id
-                  AND (:search IS NULL OR d.title_ar ILIKE :pattern
+                  AND (CAST(:pattern AS text) IS NULL OR d.title_ar ILIKE :pattern
                        OR COALESCE(d.title_en, '') ILIKE :pattern)
                 GROUP BY d.document_id, creator.actor_user_id,
                          creator.display_name_ar, creator.display_name_en,
@@ -146,7 +146,6 @@ async def list_documents(
             ),
             {
                 "tenant_id": tenant_id,
-                "search": search,
                 "pattern": f"%{search}%" if search else None,
             },
         )

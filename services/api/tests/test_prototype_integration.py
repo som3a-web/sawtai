@@ -231,6 +231,9 @@ def test_governed_knowledge_source_lifecycle() -> None:
             json={"email": "officer@sawtai.ae", "password": "SawtAI-2026!"},
         )
         officer_headers = {"Authorization": f"Bearer {officer_login.json()['access_token']}"}
+        library = client.get("/api/v1/documents", headers=officer_headers)
+        assert library.status_code == 200, library.text
+        assert library.json()["summary"]["total"] >= 1
         created = client.post(
             "/api/v1/documents",
             headers=officer_headers,
