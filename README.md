@@ -65,6 +65,9 @@ all use the password `SawtAI-2026!`:
 - **Case Management:** automatic conversion of WhatsApp complaints into
   taxonomy-routed cases, server-side SLA clocks, assignment, controlled status
   transitions, escalation, internal notes, and append-only history.
+- **Notification Center:** role-targeted in-app alerts for assignments, critical
+  cases, approaching or breached SLAs, waiting citizens, and maker-checker
+  approvals, with durable deduplication and audit-logged read state.
 
 All visible citizen records are deterministic synthetic replay data. The UI and
 API label that provenance explicitly; no live social feed or real citizen data

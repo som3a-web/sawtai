@@ -1,3 +1,5 @@
+import type { Page } from "../app/types";
+
 export interface OverviewData {
   window: { from: string; to: string };
   kpis: {
@@ -247,4 +249,27 @@ export interface CaseDetail extends CaseItem {
 export interface CaseMetadata {
   taxonomy: Array<{ node_id: string; code: string; label_ar: string; label_en: string; sla_hours: number | null }>;
   assignees: Array<{ user_id: string; display_name_ar: string; display_name_en: string; roles: string[] }>;
+}
+
+export interface NotificationItem {
+  notification_id: string;
+  occurred_at: string;
+  is_read: boolean;
+  recipient_user_id: string;
+  kind: "case_assigned" | "case_unassigned" | "sla_due_soon" | "sla_breached" | "case_critical" | "customer_waiting" | "draft_approval";
+  level: "info" | "warning" | "critical" | "action";
+  title_ar: string;
+  title_en: string;
+  body_ar: string;
+  body_en: string;
+  target_type: "case" | "response";
+  target_id: string;
+  target_page: Page;
+  reference: string | null;
+}
+
+export interface NotificationsData {
+  items: NotificationItem[];
+  unread: number;
+  count: number;
 }

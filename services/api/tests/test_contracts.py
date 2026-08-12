@@ -38,6 +38,9 @@ def test_openapi_contains_prototype_routes() -> None:
         "/api/v1/cases/{case_id}/status",
         "/api/v1/cases/{case_id}/notes",
         "/api/v1/cases/{case_id}/escalate",
+        "/api/v1/notifications",
+        "/api/v1/notifications/{notification_id}/read",
+        "/api/v1/notifications/read-all",
     }
     with TestClient(app) as client:
         paths = set(client.get("/api/openapi.json").json()["paths"])

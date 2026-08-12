@@ -144,6 +144,81 @@ def test_case_creation_routing_assignment_and_lifecycle() -> None:
         assert {"case.create", "case.assign", "case.note", "case.escalate", "case.status"} <= actions
 
 
+def test_notification_deduplication_and_read_state() -> None:
+    with TestClient(app) as client:
+        login = client.post(
+            "/api/v1/auth/token",
+            json={"email": "officer@sawtai.ae", "password": "SawtAI-2026!"},
+        )
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        current_user = client.get("/api/v1/auth/me", headers=headers).json()
+        metadata = client.get("/api/v1/cases/metadata", headers=headers).json()
+        taxonomy = metadata["taxonomy"][0]
+        created = client.post(
+            "/api/v1/cases",
+            headers=headers,
+            json={
+                "title_ar": "اختبار إشعارات الحالة",
+                "title_en": "Notification workflow integration test",
+                "node_id": taxonomy["node_id"],
+                "severity": "medium",
+            },
+        )
+        assert created.status_code == 201, created.text
+        case_id = created.json()["case_id"]
+        assigned = client.post(
+            f"/api/v1/cases/{case_id}/assign",
+            headers=headers,
+            json={"assigned_to": current_user["user_id"]},
+        )
+        assert assigned.status_code == 200, assigned.text
+
+        first = client.get("/api/v1/notifications?limit=200", headers=headers)
+        assert first.status_code == 200, first.text
+        matching = [item for item in first.json()["items"] if item["target_id"] == case_id]
+        assert len(matching) == 1
+        assert matching[0]["kind"] == "case_assigned"
+        assert matching[0]["is_read"] is False
+
+        second = client.get("/api/v1/notifications?limit=200", headers=headers)
+        assert second.status_code == 200
+        assert second.json()["count"] == first.json()["count"]
+        assert len([item for item in second.json()["items"] if item["target_id"] == case_id]) == 1
+
+        notification_id = matching[0]["notification_id"]
+        marked = client.post(f"/api/v1/notifications/{notification_id}/read", headers=headers)
+        assert marked.status_code == 200
+        refreshed = client.get("/api/v1/notifications?limit=200", headers=headers).json()
+        refreshed_item = next(item for item in refreshed["items"] if item["notification_id"] == notification_id)
+        assert refreshed_item["is_read"] is True
+
+        marked_all = client.post("/api/v1/notifications/read-all", headers=headers)
+        assert marked_all.status_code == 200
+        assert client.get("/api/v1/notifications?limit=200", headers=headers).json()["unread"] == 0
+
+
+def test_notification_read_is_scoped_to_recipient() -> None:
+    with TestClient(app) as client:
+        officer_login = client.post(
+            "/api/v1/auth/token",
+            json={"email": "officer@sawtai.ae", "password": "SawtAI-2026!"},
+        )
+        officer_headers = {"Authorization": f"Bearer {officer_login.json()['access_token']}"}
+        notifications = client.get("/api/v1/notifications", headers=officer_headers).json()["items"]
+        assert notifications
+
+        crisis_login = client.post(
+            "/api/v1/auth/token",
+            json={"email": "crisis@sawtai.ae", "password": "SawtAI-2026!"},
+        )
+        crisis_headers = {"Authorization": f"Bearer {crisis_login.json()['access_token']}"}
+        denied = client.post(
+            f"/api/v1/notifications/{notifications[0]['notification_id']}/read",
+            headers=crisis_headers,
+        )
+        assert denied.status_code == 404
+
+
 def test_draft_stream_has_grounding_and_completion_events() -> None:
     with TestClient(app) as client:
         login = client.post("/api/v1/auth/token", json={"email": "officer@sawtai.ae", "password": "SawtAI-2026!"})

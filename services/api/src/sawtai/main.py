@@ -19,6 +19,7 @@ from sawtai.data.routes import router as data_router
 from sawtai.database import dispose_engine, engine
 from sawtai.ingest.routes import router as ingest_router
 from sawtai.logging import configure_logging
+from sawtai.notifications.routes import router as notifications_router
 from sawtai.rag.routes import router as rag_router
 
 
@@ -41,6 +42,7 @@ app = FastAPI(
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(cases_router)
+app.include_router(notifications_router)
 app.include_router(channels_router)
 app.include_router(analytics_router)
 app.include_router(ingest_router)
