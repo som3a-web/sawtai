@@ -273,3 +273,48 @@ export interface NotificationsData {
   unread: number;
   count: number;
 }
+
+export type DocumentKind = "policy" | "press_release" | "faq" | "tone_of_voice" | "service_guide" | "legal" | "template";
+
+export interface KnowledgeDocument {
+  document_id: string;
+  kind: DocumentKind;
+  title_ar: string;
+  title_en: string | null;
+  lang: "ar" | "en" | "mixed";
+  version: string;
+  effective_from: string | null;
+  effective_to: string | null;
+  is_approved: boolean;
+  is_retrievable: boolean;
+  is_retired: boolean;
+  approved_by: string | null;
+  object_key: string;
+  created_at: string;
+  chunk_count: number;
+  citation_count: number;
+  created_by: string | null;
+  creator_name_ar: string | null;
+  creator_name_en: string | null;
+  approver_name_ar: string | null;
+  approver_name_en: string | null;
+}
+
+export interface KnowledgeListData {
+  items: KnowledgeDocument[];
+  summary: { total: number; approved: number; pending: number; retired: number; chunks: number };
+}
+
+export interface KnowledgeDetail extends KnowledgeDocument {
+  sha256: string;
+  org_unit_id: string | null;
+  chunks: Array<{ chunk_id: string; seq: number; heading_path: string | null; text: string; token_count: number; lang: string }>;
+  history: Array<{ audit_id: string; occurred_at: string; action: string; outcome: string; before_state: Record<string, unknown> | null; after_state: Record<string, unknown> | null; actor_name_ar: string | null; actor_name_en: string | null }>;
+}
+
+export interface KnowledgeSearchData {
+  retrieval_run_id: string;
+  tenant_id: string;
+  gate: { passed: boolean; top_score: number; threshold: number };
+  results: Array<{ chunk_id: string; document: { document_id: string; title_ar: string; title_en: string | null }; heading_path: string | null; text: string; scores: { retrieval: number } }>;
+}

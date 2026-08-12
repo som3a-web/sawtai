@@ -68,7 +68,11 @@ def test_seeded_read_routes() -> None:
             assert login.status_code == 200, login.text
             headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
             for path in paths:
-                response = client.post(path, headers=headers) if path == "/api/v1/search/documents" else client.get(path, headers=headers)
+                response = (
+                    client.post(path, headers=headers, json={"query": "جمع النفايات"})
+                    if path == "/api/v1/search/documents"
+                    else client.get(path, headers=headers)
+                )
                 assert response.status_code == 200, f"{path}: {response.text}"
 
 
@@ -219,6 +223,122 @@ def test_notification_read_is_scoped_to_recipient() -> None:
         assert denied.status_code == 404
 
 
+def test_governed_knowledge_source_lifecycle() -> None:
+    unique_phrase = f"سياسة التكامل المرجعية {uuid4()}"
+    with TestClient(app) as client:
+        officer_login = client.post(
+            "/api/v1/auth/token",
+            json={"email": "officer@sawtai.ae", "password": "SawtAI-2026!"},
+        )
+        officer_headers = {"Authorization": f"Bearer {officer_login.json()['access_token']}"}
+        created = client.post(
+            "/api/v1/documents",
+            headers=officer_headers,
+            json={
+                "kind": "service_guide",
+                "title_ar": "دليل اختبار حوكمة المعرفة",
+                "title_en": "Knowledge governance integration guide",
+                "lang": "ar",
+                "version": str(uuid4()),
+                "heading_path": "الخدمات > اختبار التكامل",
+                "content": f"# إجراء الخدمة\n\n{unique_phrase}. يتم تنفيذ الإجراء خلال يوم عمل واحد وفق الدليل المعتمد.",
+            },
+        )
+        assert created.status_code == 201, created.text
+        document_id = created.json()["document_id"]
+
+        pending_search = client.post(
+            "/api/v1/search/documents",
+            headers=officer_headers,
+            json={"query": unique_phrase},
+        )
+        assert pending_search.status_code == 200
+        assert all(result["document"]["document_id"] != document_id for result in pending_search.json()["results"])
+        assert client.post(f"/api/v1/documents/{document_id}/approve", headers=officer_headers).status_code == 403
+        reindexed = client.post(f"/api/v1/documents/{document_id}/reindex", headers=officer_headers)
+        assert reindexed.status_code == 200
+        assert reindexed.json()["chunks"] >= 1
+
+        approver_login = client.post(
+            "/api/v1/auth/token",
+            json={"email": "approver@sawtai.ae", "password": "SawtAI-2026!"},
+        )
+        approver_headers = {"Authorization": f"Bearer {approver_login.json()['access_token']}"}
+        approved = client.post(f"/api/v1/documents/{document_id}/approve", headers=approver_headers)
+        assert approved.status_code == 200, approved.text
+        detail = client.get(f"/api/v1/documents/{document_id}", headers=approver_headers)
+        assert detail.status_code == 200
+        assert detail.json()["is_approved"] is True
+        assert detail.json()["created_by"] == str(USER_ID)
+        assert detail.json()["approved_by"] == str(APPROVER_USER_ID)
+        assert {event["action"] for event in detail.json()["history"]} >= {
+            "document.create",
+            "document.reindex",
+            "document.approve",
+        }
+
+        approved_search = client.post(
+            "/api/v1/search/documents",
+            headers=officer_headers,
+            json={"query": unique_phrase},
+        )
+        assert approved_search.status_code == 200
+        assert any(result["document"]["document_id"] == document_id for result in approved_search.json()["results"])
+        grounded_draft = client.post(
+            "/api/v1/drafts",
+            headers=officer_headers,
+            json={
+                "kind": "reply",
+                "lang": "ar",
+                "audience": "citizen",
+                "instruction": unique_phrase,
+            },
+        )
+        assert grounded_draft.status_code == 200
+        assert "event: done" in grounded_draft.text
+        assert "دليل اختبار حوكمة المعرفة" in grounded_draft.text
+        cited_reindex = client.post(f"/api/v1/documents/{document_id}/reindex", headers=officer_headers)
+        assert cited_reindex.status_code == 200
+
+        retired = client.delete(f"/api/v1/documents/{document_id}", headers=approver_headers)
+        assert retired.status_code == 200
+        retired_detail = client.get(f"/api/v1/documents/{document_id}", headers=approver_headers).json()
+        assert retired_detail["is_approved"] is False
+        assert retired_detail["effective_to"] is not None
+        retired_search = client.post(
+            "/api/v1/search/documents",
+            headers=officer_headers,
+            json={"query": unique_phrase},
+        )
+        assert all(result["document"]["document_id"] != document_id for result in retired_search.json()["results"])
+
+
+def test_document_creator_cannot_self_approve() -> None:
+    with TestClient(app) as client:
+        login = client.post(
+            "/api/v1/auth/token",
+            json={"email": "approver@sawtai.ae", "password": "SawtAI-2026!"},
+        )
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        created = client.post(
+            "/api/v1/documents",
+            headers=headers,
+            json={
+                "kind": "faq",
+                "title_ar": "اختبار منع الاعتماد الذاتي",
+                "lang": "ar",
+                "version": str(uuid4()),
+                "content": "هذا محتوى اختباري موثوق للتأكد من منع منشئ المستند من اعتماد المصدر بنفسه.",
+            },
+        )
+        assert created.status_code == 201
+        denied = client.post(
+            f"/api/v1/documents/{created.json()['document_id']}/approve",
+            headers=headers,
+        )
+        assert denied.status_code == 403
+
+
 def test_draft_stream_has_grounding_and_completion_events() -> None:
     with TestClient(app) as client:
         login = client.post("/api/v1/auth/token", json={"email": "officer@sawtai.ae", "password": "SawtAI-2026!"})
@@ -237,6 +357,7 @@ def test_draft_stream_has_grounding_and_completion_events() -> None:
     assert "event: retrieval" in response.text
     assert "event: verification" in response.text
     assert "event: done" in response.text
+    assert "دليل بلاغات جمع النفايات" in response.text
 
 
 @pytest.mark.asyncio

@@ -68,6 +68,9 @@ all use the password `SawtAI-2026!`:
 - **Notification Center:** role-targeted in-app alerts for assignments, critical
   cases, approaching or breached SLAs, waiting citizens, and maker-checker
   approvals, with durable deduplication and audit-logged read state.
+- **Governed Knowledge:** versioned text and Markdown sources, structural
+  chunking, independent approval, retrieval inspection, safe abstention,
+  citation-preserving reindexing, and non-destructive retirement.
 
 All visible citizen records are deterministic synthetic replay data. The UI and
 API label that provenance explicitly; no live social feed or real citizen data

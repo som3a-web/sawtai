@@ -100,6 +100,10 @@ export async function postJson(path: string, body: unknown): Promise<Response> {
   });
 }
 
+export async function deleteJson(path: string): Promise<Response> {
+  return request(path, { method: "DELETE" });
+}
+
 export async function patchJson<T>(path: string, body: unknown): Promise<T> {
   const response = await request(path, {
     method: "PATCH",

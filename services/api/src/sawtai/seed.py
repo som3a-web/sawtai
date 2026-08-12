@@ -151,14 +151,14 @@ def seed_static(connection: object) -> None:
             "comms_officer",
             "Communication Officer",
             "مسؤول الاتصال",
-            '["analytics:read","message:read","message:review","draft:create","draft:edit","draft:submit","case:read","case:write"]',
+            '["analytics:read","message:read","message:review","draft:create","draft:edit","draft:submit","case:read","case:write","doc:read","doc:create","doc:reindex"]',
         ),
         (
             UUID("00000000-0000-0000-0000-000000000306"),
             "dept_head",
             "Department Head",
             "رئيس القسم",
-            '["analytics:read","message:read","message:review","draft:create","draft:edit","draft:submit","draft:approve","case:read","case:write"]',
+            '["analytics:read","message:read","message:review","draft:create","draft:edit","draft:submit","draft:approve","case:read","case:write","doc:read","doc:create","doc:reindex","doc:approve","doc:retire"]',
         ),
         (
             UUID("00000000-0000-0000-0000-000000000302"),
