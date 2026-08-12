@@ -36,8 +36,15 @@ Useful endpoints after startup:
 - Web shell: `http://localhost:8080/`
 - MinIO console: `http://localhost:9001/`
 
-The prototype opens directly without sign-in. The demo API credentials are
-`demo@sawtai.ae` / `demo`, and the bearer token is `sawtai-demo-token`.
+The prototype uses Argon2id passwords, 30-minute HS256 access tokens, rotating
+HTTP-only refresh sessions, and tenant-scoped role permissions. Demo accounts
+all use the password `SawtAI-2026!`:
+
+- `officer@sawtai.ae` — creates, edits, and submits replies.
+- `approver@sawtai.ae` — independently approves and sends replies.
+- `crisis@sawtai.ae` — accesses crisis monitoring.
+- `admin@sawtai.ae` — manages users and roles without citizen-message access.
+- `dpo@sawtai.ae` — accesses audit and governed data views.
 
 ## Prototype workflows
 
@@ -53,8 +60,8 @@ The prototype opens directly without sign-in. The demo API credentials are
   previews with restricted and credential fields intentionally hidden.
 - **WhatsApp channel:** signed Meta webhook ingestion, request-boundary PII
   protection, Redis worker processing, grounded response drafts, operator
-  approval, and simulated or live outbound delivery. See
-  [`BACKEND-WHATSAPP.md`](./BACKEND-WHATSAPP.md).
+  submission, independent maker-checker approval, and simulated or live
+  outbound delivery. See [`BACKEND-WHATSAPP.md`](./BACKEND-WHATSAPP.md).
 
 All visible citizen records are deterministic synthetic replay data. The UI and
 API label that provenance explicitly; no live social feed or real citizen data
@@ -96,11 +103,11 @@ and set `SAWTAI_API_URL` to the public HTTPS URL of the deployed SawtAI API.
 
 ## Public prototype
 
-`render.yaml` deploys the React console and FastAPI API as one Render web
-service backed by managed PostgreSQL. The container applies the authoritative
+`render.yaml` deploys the React console and FastAPI API with a background worker,
+managed PostgreSQL, and managed Redis. The web container applies the authoritative
 schema migration and loads deterministic synthetic demo data before startup.
-This compact topology is for stakeholder review; the complete local Compose
-topology remains the reference implementation for workers, Redis, and MinIO.
+This topology is for stakeholder review; the complete local Compose topology
+remains the reference implementation for all infrastructure services.
 
 ## Schema fidelity
 

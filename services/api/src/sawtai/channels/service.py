@@ -51,6 +51,12 @@ class UpdatedReply:
     edit_distance: int
 
 
+@dataclass(frozen=True)
+class SubmittedReply:
+    response_id: UUID
+    status: str
+
+
 async def list_whatsapp_inbox(
     session: AsyncSession,
     *,
@@ -69,13 +75,15 @@ async def list_whatsapp_inbox(
                        reply.grounding_score, reply.abstained,
                        reply.abstain_reason, reply.policy_flags,
                        reply.published_ref, reply.created_at AS reply_created_at,
+                       reply.created_by, reply.edited_by, reply.submitted_at,
                        COALESCE(citations.items, '[]'::jsonb) AS citations
                 FROM core.messages m
                 JOIN core.channels c ON c.channel_id = m.channel_id
                 LEFT JOIN LATERAL (
                     SELECT r.response_id, r.body, r.status, r.grounding_score,
                            r.abstained, r.abstain_reason, r.policy_flags,
-                           r.published_ref, r.created_at
+                           r.published_ref, r.created_at, r.created_by,
+                           r.edited_by, r.submitted_at
                     FROM core.ai_inference_log i
                     JOIN core.responses r ON r.inference_run_id = i.inference_run_id
                     WHERE i.tenant_id = m.tenant_id
@@ -148,6 +156,7 @@ async def update_whatsapp_reply(
             """
             UPDATE core.responses
             SET body = :body, status = 'draft', edited_by = :editor_user_id,
+                created_by = COALESCE(created_by, :editor_user_id),
                 edit_distance = :edit_distance, submitted_at = NULL
             WHERE response_id = :response_id AND tenant_id = :tenant_id
             """
@@ -177,6 +186,61 @@ async def update_whatsapp_reply(
         status="draft",
         edit_distance=edit_distance,
     )
+
+
+async def submit_whatsapp_reply(
+    session: AsyncSession,
+    *,
+    response_id: UUID,
+    tenant_id: UUID,
+    submitter_user_id: UUID,
+) -> SubmittedReply:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT response_id, status::text, body, abstained, policy_flags,
+                       grounding_score
+                FROM core.responses
+                WHERE response_id = :response_id AND tenant_id = :tenant_id
+                FOR UPDATE
+                """
+            ),
+            {"response_id": response_id, "tenant_id": tenant_id},
+        )
+    ).mappings().one_or_none()
+    if row is None:
+        raise LookupError("Reply not found")
+    if row["status"] != "draft":
+        raise ValueError(f"Reply cannot be submitted from status {row['status']}")
+    if len(str(row["body"]).strip()) < 10:
+        raise ValueError("Reply is too short to submit")
+    if row["abstained"] or row["policy_flags"] or float(row["grounding_score"] or 0.0) < 0.6:
+        raise ValueError("Reply did not pass grounding and policy checks")
+    await session.execute(
+        text(
+            """
+            UPDATE core.responses
+            SET status = 'pending_approval', submitted_at = now(),
+                created_by = COALESCE(created_by, :submitter),
+                edited_by = COALESCE(edited_by, :submitter)
+            WHERE response_id = :response_id AND tenant_id = :tenant_id
+            """
+        ),
+        {"response_id": response_id, "tenant_id": tenant_id, "submitter": submitter_user_id},
+    )
+    await write_audit(
+        session,
+        tenant_id=str(tenant_id),
+        actor_user_id=str(submitter_user_id),
+        action="response.submit",
+        object_type="response",
+        object_id=str(response_id),
+        before_state={"status": "draft"},
+        after_state={"status": "pending_approval"},
+    )
+    await session.commit()
+    return SubmittedReply(response_id=response_id, status="pending_approval")
 
 
 async def process_whatsapp_message(
@@ -408,6 +472,7 @@ async def approve_and_deliver_reply(
                 """
                 SELECT r.response_id, r.status::text, r.body, r.grounding_score,
                        r.abstained, r.policy_flags, r.published_ref,
+                       r.created_by, r.edited_by,
                        m.external_id AS inbound_external_id,
                        pgp_sym_decrypt(v.native_id_enc, :encryption_key) AS recipient
                 FROM core.responses r
@@ -439,8 +504,10 @@ async def approve_and_deliver_reply(
             published_ref=row["published_ref"],
             simulated=str(row["published_ref"]).startswith("simulated:"),
         )
-    if row["status"] not in {"draft", "pending_approval", "approved"}:
+    if row["status"] != "pending_approval":
         raise ValueError(f"Reply cannot be delivered from status {row['status']}")
+    if approver_user_id in {row["created_by"], row["edited_by"]}:
+        raise ValueError("Maker-checker violation: the draft author cannot approve it")
     if row["abstained"] or row["policy_flags"] or float(row["grounding_score"] or 0.0) < 0.6:
         raise ValueError("Reply did not pass grounding and policy checks")
 

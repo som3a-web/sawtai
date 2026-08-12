@@ -8,10 +8,15 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from sqlalchemy import create_engine, text
 
+from sawtai.auth.service import hash_password
 from sawtai.config import postgres_url_with_driver
 
 TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000201")
+APPROVER_USER_ID = UUID("00000000-0000-0000-0000-000000000202")
+CRISIS_USER_ID = UUID("00000000-0000-0000-0000-000000000203")
+ADMIN_USER_ID = UUID("00000000-0000-0000-0000-000000000204")
+DPO_USER_ID = UUID("00000000-0000-0000-0000-000000000205")
 ORG_ID = UUID("00000000-0000-0000-0000-000000000101")
 MODEL_RUN_ID = UUID("00000000-0000-0000-0000-000000000711")
 INFERENCE_RUN_ID = UUID("00000000-0000-0000-0000-000000000712")
@@ -100,32 +105,93 @@ def seed_static(connection: object) -> None:
         ),
         {"id": ORG_ID, "tenant": TENANT_ID},
     )
-    execute(
-        text(
-            """
-            INSERT INTO core.users (
-                user_id, tenant_id, email, display_name_ar, display_name_en,
-                org_unit_id, password_hash, mfa_enrolled
-            ) VALUES (
-                :id, :tenant, 'demo@sawtai.ae', 'مريم الكتبي', 'Maryam Al Ketbi',
-                :org, 'demo-only', true
-            ) ON CONFLICT (user_id) DO NOTHING
-            """
-        ),
-        {"id": USER_ID, "tenant": TENANT_ID, "org": ORG_ID},
+    demo_password = os.environ.get("SAWTAI_DEMO_PASSWORD", "SawtAI-2026!")
+    users = (
+        (USER_ID, "officer@sawtai.ae", "مريم الكتبي", "Maryam Al Ketbi", "comms_officer"),
+        (APPROVER_USER_ID, "approver@sawtai.ae", "خالد المنصوري", "Khalid Al Mansoori", "dept_head"),
+        (CRISIS_USER_ID, "crisis@sawtai.ae", "نورة الشامسي", "Noura Al Shamsi", "crisis_lead"),
+        (ADMIN_USER_ID, "admin@sawtai.ae", "سالم السويدي", "Salem Al Suwaidi", "sys_admin"),
+        (DPO_USER_ID, "dpo@sawtai.ae", "عائشة المهيري", "Aisha Al Muhairi", "data_steward"),
     )
+    password_hash = hash_password(demo_password)
+    for user_id, email, name_ar, name_en, _ in users:
+        execute(
+            text(
+                """
+                INSERT INTO core.users (
+                    user_id, tenant_id, email, display_name_ar, display_name_en,
+                    org_unit_id, password_hash, mfa_enrolled, is_active
+                ) VALUES (
+                    :id, :tenant, :email, :name_ar, :name_en,
+                    :org, :password_hash, true, true
+                ) ON CONFLICT (user_id) DO UPDATE SET
+                    email = EXCLUDED.email,
+                    display_name_ar = EXCLUDED.display_name_ar,
+                    display_name_en = EXCLUDED.display_name_en,
+                    org_unit_id = EXCLUDED.org_unit_id,
+                    password_hash = CASE
+                        WHEN core.users.password_hash IS NULL OR core.users.password_hash = 'demo-only'
+                        THEN EXCLUDED.password_hash ELSE core.users.password_hash END,
+                    is_active = true
+                """
+            ),
+            {
+                "id": user_id,
+                "tenant": TENANT_ID,
+                "email": email,
+                "name_ar": name_ar,
+                "name_en": name_en,
+                "org": ORG_ID,
+                "password_hash": password_hash,
+            },
+        )
     roles = [
-        ("comms_officer", "Communication Officer", "مسؤول الاتصال", '["message:read","draft:create"]'),
-        ("crisis_lead", "Crisis Lead", "مسؤول الأزمات", '["alert:read","alert:manage"]'),
+        (
+            UUID("00000000-0000-0000-0000-000000000301"),
+            "comms_officer",
+            "Communication Officer",
+            "مسؤول الاتصال",
+            '["analytics:read","message:read","message:review","draft:create","draft:edit","draft:submit"]',
+        ),
+        (
+            UUID("00000000-0000-0000-0000-000000000306"),
+            "dept_head",
+            "Department Head",
+            "رئيس القسم",
+            '["analytics:read","message:read","message:review","draft:create","draft:edit","draft:submit","draft:approve"]',
+        ),
+        (
+            UUID("00000000-0000-0000-0000-000000000302"),
+            "crisis_lead",
+            "Crisis Lead",
+            "مسؤول الأزمات",
+            '["analytics:read","alert:read","alert:manage"]',
+        ),
+        (
+            UUID("00000000-0000-0000-0000-000000000303"),
+            "sys_admin",
+            "System Administrator",
+            "مدير النظام",
+            '["user:*","role:*","source:*","taxonomy:*","config:*","model:*"]',
+        ),
+        (
+            UUID("00000000-0000-0000-0000-000000000304"),
+            "data_steward",
+            "DPO / Data Steward",
+            "مسؤول حماية البيانات",
+            '["audit:read","data:read","retention:manage"]',
+        ),
     ]
-    for index, (code, name_en, name_ar, permissions) in enumerate(roles, start=1):
-        role_id = UUID(f"00000000-0000-0000-0000-{300 + index:012d}")
+    for role_id, code, name_en, name_ar, permissions in roles:
         execute(
             text(
                 """
                 INSERT INTO core.roles (role_id, code, name_en, name_ar, permissions)
                 VALUES (:id, :code, :name_en, :name_ar, CAST(:permissions AS jsonb))
-                ON CONFLICT (code) DO NOTHING
+                ON CONFLICT (code) DO UPDATE SET
+                    name_en = EXCLUDED.name_en,
+                    name_ar = EXCLUDED.name_ar,
+                    permissions = EXCLUDED.permissions
                 """
             ),
             {
@@ -136,15 +202,26 @@ def seed_static(connection: object) -> None:
                 "permissions": permissions,
             },
         )
+    seeded_user_ids = [user[0] for user in users]
+    execute(
+        text("DELETE FROM core.user_roles WHERE user_id = ANY(:user_ids)"),
+        {"user_ids": seeded_user_ids},
+    )
+    for user_id, _, _, _, role_code in users:
         execute(
             text(
                 """
                 INSERT INTO core.user_roles (user_id, role_id, org_unit_id, granted_by)
-                VALUES (:user_id, :role_id, :org_id, :user_id)
-                ON CONFLICT DO NOTHING
+                SELECT :user_id, role_id, :org_id, :admin_id
+                FROM core.roles WHERE code = :role_code
                 """
             ),
-            {"user_id": USER_ID, "role_id": role_id, "org_id": ORG_ID},
+            {
+                "user_id": user_id,
+                "org_id": ORG_ID,
+                "admin_id": ADMIN_USER_ID,
+                "role_code": role_code,
+            },
         )
 
     channel_rows = [
@@ -723,14 +800,18 @@ def seed_whatsapp_workspace(connection: object) -> None:
                     response_id, tenant_id, kind, lang, audience, body, status,
                     generated_by_model, model_version, prompt_version,
                     inference_run_id, grounding_score, policy_flags, abstained,
-                    abstain_reason, approved_by, approved_at, published_at, published_ref
+                    abstain_reason, created_by, edited_by, approved_by,
+                    approved_at, published_at, published_ref
                 ) VALUES (
                     :response_id, :tenant_id, 'reply', 'ar', 'citizen', :body,
                     CAST(:status AS core.response_status), 'grounded-template', 'v1',
                     'whatsapp-grounded-v1', :inference_id, :score, '[]', :abstained,
-                    :abstain_reason, :approved_by, :approved_at, :published_at,
+                    :abstain_reason, :created_by, :created_by, :approved_by, :approved_at, :published_at,
                     :published_ref
-                ) ON CONFLICT (response_id) DO NOTHING
+                ) ON CONFLICT (response_id) DO UPDATE SET
+                    created_by = COALESCE(core.responses.created_by, EXCLUDED.created_by),
+                    edited_by = COALESCE(core.responses.edited_by, EXCLUDED.edited_by),
+                    approved_by = COALESCE(core.responses.approved_by, EXCLUDED.approved_by)
                 """
             ),
             {
@@ -742,7 +823,8 @@ def seed_whatsapp_workspace(connection: object) -> None:
                 "score": sample["score"],
                 "abstained": sample["abstained"],
                 "abstain_reason": "no_supporting_source" if sample["abstained"] else None,
-                "approved_by": USER_ID if sample["status"] == "published" else None,
+                "created_by": USER_ID,
+                "approved_by": APPROVER_USER_ID if sample["status"] == "published" else None,
                 "approved_at": sample["occurred_at"] if sample["status"] == "published" else None,
                 "published_at": sample["occurred_at"] if sample["status"] == "published" else None,
                 "published_ref": sample["published_ref"],

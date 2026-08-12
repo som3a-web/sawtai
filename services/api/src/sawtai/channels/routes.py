@@ -17,6 +17,7 @@ from sawtai.channels.service import (
     list_whatsapp_inbox,
     message_job_payload,
     status_job_payload,
+    submit_whatsapp_reply,
     update_whatsapp_reply,
 )
 from sawtai.channels.whatsapp import WhatsAppDeliveryError
@@ -130,7 +131,7 @@ async def whatsapp_inbox(
 async def approve_reply(
     response_id: UUID,
     payload: ReplyApprovalRequest,
-    user: UserContext = Depends(require("draft:submit")),
+    user: UserContext = Depends(require("draft:approve")),
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
@@ -155,6 +156,26 @@ async def approve_reply(
         "published_ref": delivered.published_ref,
         "simulated": delivered.simulated,
     }
+
+
+@router.post("/replies/{response_id}/submit")
+async def submit_reply(
+    response_id: UUID,
+    user: UserContext = Depends(require("draft:submit")),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        submitted = await submit_whatsapp_reply(
+            session,
+            response_id=response_id,
+            tenant_id=UUID(user.tenant_id),
+            submitter_user_id=UUID(user.user_id),
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    return {"response_id": submitted.response_id, "status": submitted.status}
 
 
 @router.patch("/replies/{response_id}")

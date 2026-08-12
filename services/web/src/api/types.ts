@@ -132,6 +132,9 @@ export interface WhatsAppInboxItem {
   policy_flags: string[] | null;
   published_ref: string | null;
   reply_created_at: string | null;
+  created_by: string | null;
+  edited_by: string | null;
+  submitted_at: string | null;
   citations: WhatsAppCitation[];
 }
 
@@ -145,4 +148,43 @@ export interface WhatsAppDeliveryData {
   status: string;
   published_ref: string;
   simulated: boolean;
+}
+
+export interface AuthUser {
+  user_id: string;
+  tenant_id: string;
+  email: string;
+  display_name_ar: string;
+  display_name_en: string;
+  org_unit_id: string | null;
+  roles: string[];
+  permissions: string[];
+  mfa_enrolled: boolean;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  token_type: "bearer";
+  expires_in: number;
+  user: AuthUser;
+}
+
+export interface UserRecord {
+  user_id: string;
+  email: string;
+  display_name_ar: string;
+  display_name_en: string;
+  org_unit_id: string | null;
+  is_active: boolean;
+  mfa_enrolled: boolean;
+  last_login_at: string | null;
+  roles: string[];
+}
+
+export interface RoleRecord {
+  role_id: string;
+  code: string;
+  name_ar: string;
+  name_en: string;
+  permissions: string[];
 }

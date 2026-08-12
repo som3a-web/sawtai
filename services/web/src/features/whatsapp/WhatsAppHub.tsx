@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { getJson, patchJson, postJson } from "../../api/client";
 import type {
+  AuthUser,
   WhatsAppDeliveryData,
   WhatsAppInboxData,
   WhatsAppInboxItem,
@@ -20,6 +21,7 @@ function citizenLabel(item: WhatsAppInboxItem, locale: Locale) {
 
 function statusLabel(item: WhatsAppInboxItem, locale: Locale) {
   if (item.reply_status === "published") return locale === "ar" ? "تم الإرسال" : "Sent";
+  if (item.reply_status === "pending_approval") return locale === "ar" ? "بانتظار الاعتماد" : "Awaiting approval";
   if (item.abstained) return locale === "ar" ? "مراجعة بشرية" : "Human review";
   if (item.response_id) return locale === "ar" ? "مسودة جاهزة" : "Draft ready";
   return locale === "ar" ? "قيد المعالجة" : "Processing";
@@ -31,7 +33,7 @@ function itemTone(item: WhatsAppInboxItem) {
   return "ready";
 }
 
-export function WhatsAppHub({ locale }: { locale: Locale }) {
+export function WhatsAppHub({ locale, user }: { locale: Locale; user: AuthUser }) {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<QueueFilter>("all");
@@ -75,16 +77,24 @@ export function WhatsAppHub({ locale }: { locale: Locale }) {
     },
   });
 
-  const approve = useMutation({
+  const submit = useMutation({
     mutationFn: async (item: WhatsAppInboxItem) => {
       if (!item.response_id) throw new Error("No response available");
       if (draft.trim() !== (item.reply_body ?? "").trim()) {
         await patchJson(`/api/v1/channels/whatsapp/replies/${item.response_id}`, { body: draft });
       }
-      const response = await postJson(
-        `/api/v1/channels/whatsapp/replies/${item.response_id}/approve-and-send`,
-        { comment: "Approved from WhatsApp Hub" },
-      );
+      return postJson(`/api/v1/channels/whatsapp/replies/${item.response_id}/submit`, {});
+    },
+    onSuccess: async () => {
+      setNotice(locale === "ar" ? "تم إرسال المسودة للاعتماد" : "Draft submitted for approval");
+      await queryClient.invalidateQueries({ queryKey: ["whatsapp-inbox"] });
+    },
+  });
+
+  const approve = useMutation({
+    mutationFn: async (item: WhatsAppInboxItem) => {
+      if (!item.response_id) throw new Error("No response available");
+      const response = await postJson(`/api/v1/channels/whatsapp/replies/${item.response_id}/approve-and-send`, { comment: "Approved from WhatsApp Hub" });
       return response.json() as Promise<WhatsAppDeliveryData>;
     },
     onSuccess: async (delivery) => {
@@ -98,14 +108,25 @@ export function WhatsAppHub({ locale }: { locale: Locale }) {
   if (inbox.isLoading || status.isLoading) return <LoadingCard />;
 
   const isPublished = selected?.reply_status === "published";
-  const canSend = Boolean(
+  const isPending = selected?.reply_status === "pending_approval";
+  const canEdit = user.permissions.includes("draft:edit") && !isPending && !isPublished;
+  const canSubmit = Boolean(
+    user.permissions.includes("draft:submit")
+    &&
     selected?.response_id
     && !selected.abstained
-    && !isPublished
+    && selected.reply_status === "draft"
     && draft.trim().length >= 10,
   );
-  const isBusy = saveDraft.isPending || approve.isPending;
-  const error = inbox.error || status.error || saveDraft.error || approve.error;
+  const canApprove = Boolean(
+    user.permissions.includes("draft:approve")
+    && selected?.response_id
+    && isPending
+    && selected.created_by !== user.user_id
+    && selected.edited_by !== user.user_id,
+  );
+  const isBusy = saveDraft.isPending || submit.isPending || approve.isPending;
+  const error = inbox.error || status.error || saveDraft.error || submit.error || approve.error;
 
   return (
     <div className="page-stack whatsapp-page">
@@ -153,12 +174,14 @@ export function WhatsAppHub({ locale }: { locale: Locale }) {
             <header className="wa-conversation-head"><div className="wa-citizen-avatar large">{selected.author_pseudonym.trim().slice(-1).toUpperCase()}</div><div><h3>{citizenLabel(selected, locale)}</h3><p>{locale === "ar" ? "معرّف مشفّر · بيانات شخصية محمية" : "Encrypted identity · personal data protected"}</p></div><span className={`wa-status ${itemTone(selected)}`}>{statusLabel(selected, locale)}</span></header>
             <div className="wa-thread">
               <div className="wa-message citizen"><span>{locale === "ar" ? "رسالة المتعامل" : "Citizen message"}</span><p><bdi>{selected.raw_text}</bdi></p><time>{new Date(selected.occurred_at).toLocaleTimeString(locale === "ar" ? "ar-AE" : "en-AE", { hour: "2-digit", minute: "2-digit" })}</time></div>
-              {selected.abstained ? <div className="wa-abstain"><strong>!</strong><div><b>{locale === "ar" ? "توقف الذكاء الاصطناعي بأمان" : "AI safely abstained"}</b><p>{locale === "ar" ? "لم يجد النظام مصدراً معتمداً كافياً. يجب كتابة الرد يدوياً أو إحالة المحادثة." : "No sufficiently relevant approved source was found. Write manually or escalate."}</p></div></div> : selected.response_id ? <div className="wa-draft-block"><div className="wa-ai-label"><span>✦</span><div><b>{locale === "ar" ? "رد مقترح من صوتي" : "SawtAI suggested reply"}</b><small>{locale === "ar" ? "يمكنك التعديل قبل الاعتماد" : "Editable before approval"}</small></div><em>{Math.round((selected.grounding_score ?? 0) * 100)}% {locale === "ar" ? "موثوقية" : "grounded"}</em></div><textarea value={draft} onChange={(event) => { setDraft(event.target.value); setNotice(""); }} disabled={isPublished} aria-label={locale === "ar" ? "نص الرد المقترح" : "Suggested reply text"} /><div className="wa-editor-meta"><span>{draft.length} / 4000</span><span>✓ {locale === "ar" ? "لا تظهر بيانات شخصية" : "No visible PII"}</span><span>✓ {locale === "ar" ? "لهجة عربية رسمية" : "Official Arabic tone"}</span></div></div> : <div className="wa-processing"><i /><span>{locale === "ar" ? "يتم تحليل الرسالة وإعداد الرد" : "Analyzing message and preparing reply"}</span></div>}
+              {selected.abstained ? <div className="wa-abstain"><strong>!</strong><div><b>{locale === "ar" ? "توقف الذكاء الاصطناعي بأمان" : "AI safely abstained"}</b><p>{locale === "ar" ? "لم يجد النظام مصدراً معتمداً كافياً. يجب كتابة الرد يدوياً أو إحالة المحادثة." : "No sufficiently relevant approved source was found. Write manually or escalate."}</p></div></div> : selected.response_id ? <div className="wa-draft-block"><div className="wa-ai-label"><span>✦</span><div><b>{locale === "ar" ? "رد مقترح من صوتي" : "SawtAI suggested reply"}</b><small>{isPending ? (locale === "ar" ? "مقفل بانتظار اعتماد شخص آخر" : "Locked for independent approval") : (locale === "ar" ? "يمكنك التعديل قبل الإرسال للاعتماد" : "Editable before submission")}</small></div><em>{Math.round((selected.grounding_score ?? 0) * 100)}% {locale === "ar" ? "موثوقية" : "grounded"}</em></div><textarea value={draft} onChange={(event) => { setDraft(event.target.value); setNotice(""); }} disabled={!canEdit} aria-label={locale === "ar" ? "نص الرد المقترح" : "Suggested reply text"} /><div className="wa-editor-meta"><span>{draft.length} / 4000</span><span>✓ {locale === "ar" ? "لا تظهر بيانات شخصية" : "No visible PII"}</span><span>✓ {locale === "ar" ? "لهجة عربية رسمية" : "Official Arabic tone"}</span></div></div> : <div className="wa-processing"><i /><span>{locale === "ar" ? "يتم تحليل الرسالة وإعداد الرد" : "Analyzing message and preparing reply"}</span></div>}
             </div>
             <footer className="wa-actions">
               <div>{notice && <span className="wa-notice">✓ {notice}</span>}{error && <span className="wa-error">{locale === "ar" ? "تعذر إكمال الإجراء. حاول مرة أخرى." : "Action failed. Please try again."}</span>}</div>
-              <button className="wa-save" disabled={!selected.response_id || isPublished || isBusy || draft.trim() === (selected.reply_body ?? "").trim()} onClick={() => selected.response_id && saveDraft.mutate({ responseId: selected.response_id, body: draft })}>{saveDraft.isPending ? (locale === "ar" ? "جارٍ الحفظ…" : "Saving…") : (locale === "ar" ? "حفظ التعديل" : "Save edit")}</button>
-              <button className="wa-send" disabled={!canSend || isBusy} onClick={() => selected && approve.mutate(selected)}>{approve.isPending ? (locale === "ar" ? "جارٍ الإرسال…" : "Sending…") : isPublished ? (locale === "ar" ? "تم الإرسال ✓" : "Sent ✓") : (locale === "ar" ? "اعتماد وإرسال" : "Approve & send")}</button>
+              {canEdit && <button className="wa-save" disabled={!selected.response_id || isBusy || draft.trim() === (selected.reply_body ?? "").trim()} onClick={() => selected.response_id && saveDraft.mutate({ responseId: selected.response_id, body: draft })}>{saveDraft.isPending ? (locale === "ar" ? "جارٍ الحفظ…" : "Saving…") : (locale === "ar" ? "حفظ التعديل" : "Save edit")}</button>}
+              {user.permissions.includes("draft:submit") && !isPending && !isPublished && <button className="wa-send" disabled={!canSubmit || isBusy} onClick={() => selected && submit.mutate(selected)}>{submit.isPending ? (locale === "ar" ? "جارٍ الإرسال…" : "Submitting…") : (locale === "ar" ? "إرسال للاعتماد" : "Submit for approval")}</button>}
+              {user.permissions.includes("draft:approve") && isPending && <button className="wa-send" disabled={!canApprove || isBusy} onClick={() => selected && approve.mutate(selected)}>{approve.isPending ? (locale === "ar" ? "جارٍ الإرسال…" : "Sending…") : (locale === "ar" ? "اعتماد وإرسال" : "Approve & send")}</button>}
+              {isPublished && <button className="wa-send" disabled>{locale === "ar" ? "تم الإرسال ✓" : "Sent ✓"}</button>}
             </footer>
           </> : <div className="wa-empty large">{locale === "ar" ? "اختر محادثة لبدء المراجعة" : "Select a conversation to begin review"}</div>}
         </main>

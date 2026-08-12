@@ -23,6 +23,12 @@ class Settings(BaseSettings):
         alias="DATABASE_URL",
     )
     redis_url: str = Field(default="redis://redis:6379/0", alias="REDIS_URL")
+    jwt_secret: str = Field(
+        default="local-only-insecure-jwt-secret-change-before-production",
+        alias="JWT_SECRET",
+    )
+    access_token_minutes: int = Field(default=30, alias="ACCESS_TOKEN_MINUTES")
+    refresh_token_days: int = Field(default=7, alias="REFRESH_TOKEN_DAYS")
     tenant_pepper: str = Field(
         default="local-only-insecure-tenant-pepper",
         alias="TENANT_PEPPER",

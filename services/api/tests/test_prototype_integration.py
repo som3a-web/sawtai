@@ -7,40 +7,74 @@ from sawtai.channels.models import WhatsAppMessage, WhatsAppMetadata
 from sawtai.channels.service import (
     approve_and_deliver_reply,
     process_whatsapp_message,
+    submit_whatsapp_reply,
     update_whatsapp_reply,
 )
 from sawtai.config import get_settings
 from sawtai.database import session_factory
 from sawtai.main import app
-from sawtai.seed import TENANT_ID, USER_ID
+from sawtai.seed import APPROVER_USER_ID, TENANT_ID, USER_ID
 
 pytestmark = pytest.mark.integration
 
 
-def test_seeded_read_routes() -> None:
-    paths = (
-        "/api/v1/health/ready",
-        "/api/v1/analytics/overview",
-        "/api/v1/analytics/timeseries",
-        "/api/v1/messages?limit=3",
-        "/api/v1/alerts",
-        "/api/v1/forecast/replay",
-        "/api/v1/search/documents",
-        "/api/v1/audit",
-        "/api/v1/data/tables",
-        "/api/v1/data/tables/messages?limit=3",
-        "/api/v1/channels/whatsapp/inbox?limit=3",
-    )
+def test_auth_sessions_and_least_privilege_roles() -> None:
     with TestClient(app) as client:
-        for path in paths:
-            response = client.get(path) if path != "/api/v1/search/documents" else client.post(path)
-            assert response.status_code == 200, f"{path}: {response.text}"
+        officer = client.post(
+            "/api/v1/auth/token",
+            json={"email": "officer@sawtai.ae", "password": "SawtAI-2026!"},
+        )
+        assert officer.status_code == 200
+        officer_headers = {"Authorization": f"Bearer {officer.json()['access_token']}"}
+        assert client.get("/api/v1/auth/me", headers=officer_headers).status_code == 200
+        assert client.get("/api/v1/users", headers=officer_headers).status_code == 403
+
+        administrator = client.post(
+            "/api/v1/auth/token",
+            json={"email": "admin@sawtai.ae", "password": "SawtAI-2026!"},
+        )
+        assert administrator.status_code == 200
+        admin_headers = {"Authorization": f"Bearer {administrator.json()['access_token']}"}
+        assert client.get("/api/v1/users", headers=admin_headers).status_code == 200
+        assert client.get("/api/v1/channels/whatsapp/inbox", headers=admin_headers).status_code == 403
+        assert client.post("/api/v1/auth/refresh").status_code == 200
+        assert client.post("/api/v1/auth/logout").status_code == 204
+        assert client.post("/api/v1/auth/refresh").status_code == 401
+
+
+def test_seeded_read_routes() -> None:
+    with TestClient(app) as client:
+        assert client.get("/api/v1/health/ready").status_code == 200
+        role_paths = {
+            "officer@sawtai.ae": (
+                "/api/v1/analytics/overview",
+                "/api/v1/analytics/timeseries",
+                "/api/v1/messages?limit=3",
+                "/api/v1/search/documents",
+                "/api/v1/channels/whatsapp/inbox?limit=3",
+            ),
+            "crisis@sawtai.ae": ("/api/v1/alerts", "/api/v1/forecast/replay"),
+            "dpo@sawtai.ae": (
+                "/api/v1/audit",
+                "/api/v1/data/tables",
+                "/api/v1/data/tables/messages?limit=3",
+            ),
+        }
+        for email, paths in role_paths.items():
+            login = client.post("/api/v1/auth/token", json={"email": email, "password": "SawtAI-2026!"})
+            assert login.status_code == 200, login.text
+            headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+            for path in paths:
+                response = client.post(path, headers=headers) if path == "/api/v1/search/documents" else client.get(path, headers=headers)
+                assert response.status_code == 200, f"{path}: {response.text}"
 
 
 def test_draft_stream_has_grounding_and_completion_events() -> None:
     with TestClient(app) as client:
+        login = client.post("/api/v1/auth/token", json={"email": "officer@sawtai.ae", "password": "SawtAI-2026!"})
         response = client.post(
             "/api/v1/drafts",
+            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
             json={
                 "kind": "reply",
                 "case_id": "00000000-0000-0000-0000-000000000a01",
@@ -97,11 +131,20 @@ async def test_whatsapp_message_to_approved_delivery_flow() -> None:
     assert updated.edit_distance > 0
 
     async with session_factory() as session:
+        submitted = await submit_whatsapp_reply(
+            session,
+            response_id=result.response_id,
+            tenant_id=TENANT_ID,
+            submitter_user_id=USER_ID,
+        )
+    assert submitted.status == "pending_approval"
+
+    async with session_factory() as session:
         delivery = await approve_and_deliver_reply(
             session,
             response_id=result.response_id,
             tenant_id=TENANT_ID,
-            approver_user_id=USER_ID,
+            approver_user_id=APPROVER_USER_ID,
             settings=settings,
             comment="integration approval",
         )

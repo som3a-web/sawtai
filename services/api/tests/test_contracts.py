@@ -23,7 +23,14 @@ def test_openapi_contains_prototype_routes() -> None:
         "/api/v1/channels/whatsapp/status",
         "/api/v1/channels/whatsapp/inbox",
         "/api/v1/channels/whatsapp/replies/{response_id}",
+        "/api/v1/channels/whatsapp/replies/{response_id}/submit",
         "/api/v1/channels/whatsapp/replies/{response_id}/approve-and-send",
+        "/api/v1/auth/token",
+        "/api/v1/auth/refresh",
+        "/api/v1/auth/logout",
+        "/api/v1/auth/me",
+        "/api/v1/users",
+        "/api/v1/roles",
     }
     with TestClient(app) as client:
         paths = set(client.get("/api/openapi.json").json()["paths"])
