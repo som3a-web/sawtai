@@ -8,6 +8,8 @@ x-app-environment: &app-environment
   ALEMBIC_DATABASE_URL: ${ALEMBIC_DATABASE_URL:-postgresql+psycopg://sawtai:change-me-for-local-development@postgres:5432/sawtai}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
   MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+  MINIO_ROOT_USER: ${MINIO_ROOT_USER:-sawtai-local}
+  MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-minio-secret}
   MINIO_RAW_BUCKET: ${MINIO_RAW_BUCKET:-sawtai-raw}
   MINIO_MEDIA_BUCKET: ${MINIO_MEDIA_BUCKET:-sawtai-media}
   MINIO_EXPORTS_BUCKET: ${MINIO_EXPORTS_BUCKET:-sawtai-exports}
@@ -15,6 +17,7 @@ x-app-environment: &app-environment
   TENANT_PEPPER: ${TENANT_PEPPER:-local-only-insecure-tenant-pepper}
   PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY:-local-only-insecure-pii-encryption-key}
   ENCODERS_URL: ${ENCODERS_URL:-http://encoders:8001}
+  RAG_ENCODER_MODE: ${RAG_ENCODER_MODE:-fallback}
   LLM_BASE_URL: ${LLM_BASE_URL:-http://llm:8000/v1}
   WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
   WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
@@ -26,6 +29,7 @@ x-app-environment: &app-environment
   WHATSAPP_TENANT_CODE: ${WHATSAPP_TENANT_CODE:-shj-demo}
   WHATSAPP_SOURCE_HANDLE: ${WHATSAPP_SOURCE_HANDLE:-demo-whatsapp}
   RAG_LEXICAL_GATE: ${RAG_LEXICAL_GATE:-0.18}
+  RAG_HYBRID_GATE: ${RAG_HYBRID_GATE:-0.18}
 
 x-app-build: &app-build
   context: .
@@ -165,6 +169,8 @@ services:
       context: services/encoders
     environment:
       MODEL_DEVICE: ${MODEL_DEVICE:-cuda}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+      RERANK_MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 15s

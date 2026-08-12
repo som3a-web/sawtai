@@ -37,6 +37,16 @@ class Settings(BaseSettings):
         default="local-only-insecure-pii-encryption-key",
         alias="PII_ENCRYPTION_KEY",
     )
+    object_store_endpoint: str = Field(default="", alias="MINIO_ENDPOINT")
+    object_store_access_key: str = Field(default="", alias="MINIO_ROOT_USER")
+    object_store_secret_key: str = Field(default="", alias="MINIO_ROOT_PASSWORD")
+    object_store_bucket: str = Field(default="sawtai-media", alias="MINIO_MEDIA_BUCKET")
+    object_store_local_root: str = Field(default="/tmp/sawtai-objects", alias="OBJECT_STORE_LOCAL_ROOT")
+    document_max_upload_bytes: int = Field(default=15_728_640, alias="DOCUMENT_MAX_UPLOAD_BYTES")
+    document_max_pages: int = Field(default=250, alias="DOCUMENT_MAX_PAGES")
+    encoders_url: str = Field(default="http://encoders:8001", alias="ENCODERS_URL")
+    rag_encoder_mode: Literal["fallback", "remote"] = Field(default="fallback", alias="RAG_ENCODER_MODE")
+    rag_encoder_timeout_seconds: float = Field(default=8.0, alias="RAG_ENCODER_TIMEOUT_SECONDS")
     whatsapp_verify_token: str = Field(default="", alias="WHATSAPP_VERIFY_TOKEN")
     whatsapp_app_secret: str = Field(default="", alias="WHATSAPP_APP_SECRET")
     whatsapp_access_token: str = Field(default="", alias="WHATSAPP_ACCESS_TOKEN")
@@ -64,6 +74,7 @@ class Settings(BaseSettings):
         alias="WHATSAPP_REPLY_MODE",
     )
     rag_lexical_gate: float = Field(default=0.18, alias="RAG_LEXICAL_GATE")
+    rag_hybrid_gate: float = Field(default=0.18, alias="RAG_HYBRID_GATE")
 
 
 @lru_cache

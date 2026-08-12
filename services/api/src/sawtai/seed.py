@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, text
 
 from sawtai.auth.service import hash_password
 from sawtai.config import postgres_url_with_driver
+from sawtai.rag.ingestion import hash_embedding, vector_literal
 
 TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000201")
@@ -395,7 +396,7 @@ def seed_static(connection: object) -> None:
             ) VALUES (
                 :chunk_id, :tenant_id, :document_id, 1,
                 'خدمات النفايات > البلاغات والمتابعة', :text, :norm_text,
-                54, 'ar', array_fill(0.0::real, ARRAY[1024])::vector,
+                54, 'ar', CAST(:embedding AS vector),
                 to_tsvector('simple', :norm_text)
             ) ON CONFLICT (chunk_id) DO NOTHING
             """
@@ -406,6 +407,7 @@ def seed_static(connection: object) -> None:
             "document_id": document_id,
             "text": policy_text,
             "norm_text": policy_text,
+            "embedding": vector_literal(hash_embedding(policy_text)),
         },
     )
     execute(

@@ -7,6 +7,9 @@ ENV PYTHONUNBUFFERED=1 \
 COPY --from=ghcr.io/astral-sh/uv:0.5.24 /uv /uvx /bin/
 
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-ara \
+    && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml README.md ./
 COPY services/api/src ./services/api/src
 COPY services/api/migrations ./services/api/migrations

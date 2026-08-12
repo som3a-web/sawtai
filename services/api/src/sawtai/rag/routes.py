@@ -5,7 +5,16 @@ from datetime import date
 from typing import Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import text
@@ -15,16 +24,20 @@ from sawtai.audit.service import write_audit
 from sawtai.auth.service import UserContext, require
 from sawtai.config import Settings, get_settings
 from sawtai.database import get_session
+from sawtai.rag.ingestion import DocumentIngestionError
 from sawtai.rag.service import (
     GroundedTemplateProvider,
+    UploadedDocumentError,
     approve_document,
     create_document,
     get_document,
     has_prompt_injection,
+    ingest_uploaded_document,
     list_documents,
     reindex_document,
     retire_document,
     retrieve_approved_chunks,
+    retry_document_ingestion,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["drafting"])
@@ -83,10 +96,11 @@ async def create_draft(
         tenant_id=UUID(user.tenant_id),
         query=payload.instruction,
         limit=5,
+        settings=settings,
     )
     forbidden = any(term in payload.instruction.lower() for term in ("تعويض", "ضمان", "liability", "guarantee"))
     injected = has_prompt_injection(payload.instruction)
-    supported = bool(chunks) and chunks[0].score >= settings.rag_lexical_gate
+    supported = bool(chunks) and chunks[0].score >= settings.rag_hybrid_gate
     reason = "prompt_injection_detected" if injected else "unsupported_or_forbidden_commitment" if forbidden else None if supported else "no_supporting_source"
     abstained = reason is not None
     citation = None if abstained else chunks[0]
@@ -251,6 +265,7 @@ async def add_document(
     payload: DocumentCreateRequest,
     user: UserContext = Depends(require("doc:create")),
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
     try:
         document_id = await create_document(
@@ -267,10 +282,63 @@ async def add_document(
             content=payload.content,
             heading_path=payload.heading_path,
             org_unit_id=UUID(user.org_unit_id) if user.org_unit_id else None,
+            settings=settings,
         )
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     return {"document_id": str(document_id), "status": "pending_approval"}
+
+
+@router.post("/documents/upload", status_code=status.HTTP_201_CREATED)
+async def upload_document(
+    file: UploadFile = File(...),
+    kind: DocumentKind = Form(...),
+    title_ar: str = Form(..., min_length=3, max_length=300),
+    title_en: str | None = Form(default=None, max_length=300),
+    lang: DocumentLanguage = Form(default="ar"),
+    version: str = Form(default="1", min_length=1, max_length=50),
+    effective_from: date | None = Form(default=None),
+    effective_to: date | None = Form(default=None),
+    user: UserContext = Depends(require("doc:create")),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    if effective_from and effective_to and effective_to <= effective_from:
+        raise HTTPException(status_code=422, detail="effective_to must be after effective_from")
+    content = await file.read(settings.document_max_upload_bytes + 1)
+    try:
+        return await ingest_uploaded_document(
+            session,
+            tenant_id=UUID(user.tenant_id),
+            actor_user_id=UUID(user.user_id),
+            kind=kind,
+            title_ar=title_ar,
+            title_en=title_en,
+            language=lang,
+            version=version,
+            effective_from=effective_from,
+            effective_to=effective_to,
+            org_unit_id=UUID(user.org_unit_id) if user.org_unit_id else None,
+            filename=file.filename or "document",
+            media_type=file.content_type,
+            content=content,
+            settings=settings,
+        )
+    except UploadedDocumentError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": error.code,
+                "message": str(error),
+                "document_id": str(error.document_id),
+                "retry_available": True,
+            },
+        ) from error
+    except DocumentIngestionError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": error.code, "message": str(error), "retry_available": False},
+        ) from error
 
 
 @router.post("/search/documents")
@@ -285,6 +353,7 @@ async def search_documents(
         tenant_id=UUID(user.tenant_id),
         query=payload.query,
         limit=payload.limit,
+        settings=settings,
     )
     return {
         "retrieval_run_id": str(uuid4()),
@@ -299,14 +368,24 @@ async def search_documents(
                 },
                 "heading_path": chunk.heading_path,
                 "text": chunk.text,
-                "scores": {"retrieval": round(chunk.score, 4)},
+                "scores": {
+                    "dense": round(chunk.dense_score, 4),
+                    "sparse": round(chunk.sparse_score, 4),
+                    "rerank": round(chunk.rerank_score, 4),
+                    "retrieval": round(chunk.score, 4),
+                },
+                "models": {
+                    "embedding": chunk.embedding_provider,
+                    "reranker": chunk.rerank_provider,
+                },
             }
             for chunk in chunks
         ],
         "gate": {
-            "passed": bool(chunks) and chunks[0].score >= settings.rag_lexical_gate,
+            "passed": bool(chunks) and chunks[0].score >= settings.rag_hybrid_gate,
             "top_score": round(chunks[0].score, 4) if chunks else 0.0,
-            "threshold": settings.rag_lexical_gate,
+            "threshold": settings.rag_hybrid_gate,
+            "mode": "hybrid_dense_sparse_rerank",
         },
     }
 
@@ -350,6 +429,7 @@ async def reindex_source(
     document_id: UUID,
     user: UserContext = Depends(require("doc:reindex")),
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     try:
         chunks = await reindex_document(
@@ -357,10 +437,38 @@ async def reindex_source(
             tenant_id=UUID(user.tenant_id),
             document_id=document_id,
             actor_user_id=UUID(user.user_id),
+            settings=settings,
         )
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return {"document_id": str(document_id), "status": "indexed", "chunks": chunks}
+
+
+@router.post("/documents/{document_id}/retry")
+async def retry_source_ingestion(
+    document_id: UUID,
+    user: UserContext = Depends(require("doc:reindex")),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    try:
+        return await retry_document_ingestion(
+            session,
+            tenant_id=UUID(user.tenant_id),
+            document_id=document_id,
+            actor_user_id=UUID(user.user_id),
+            settings=settings,
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except UploadedDocumentError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": error.code, "message": str(error), "document_id": str(error.document_id)},
+        ) from error
+    except (DocumentIngestionError, ValueError) as error:
+        detail = {"code": error.code, "message": str(error)} if isinstance(error, DocumentIngestionError) else str(error)
+        raise HTTPException(status_code=409, detail=detail) from error
 
 
 @router.delete("/documents/{document_id}")

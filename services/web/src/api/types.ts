@@ -298,6 +298,11 @@ export interface KnowledgeDocument {
   creator_name_en: string | null;
   approver_name_ar: string | null;
   approver_name_en: string | null;
+  ingestion_status: "processing" | "indexed" | "failed";
+  extraction_method: string | null;
+  embedding_provider: string | null;
+  storage_backend: string | null;
+  ingestion_error: string | null;
 }
 
 export interface KnowledgeListData {
@@ -315,6 +320,13 @@ export interface KnowledgeDetail extends KnowledgeDocument {
 export interface KnowledgeSearchData {
   retrieval_run_id: string;
   tenant_id: string;
-  gate: { passed: boolean; top_score: number; threshold: number };
-  results: Array<{ chunk_id: string; document: { document_id: string; title_ar: string; title_en: string | null }; heading_path: string | null; text: string; scores: { retrieval: number } }>;
+  gate: { passed: boolean; top_score: number; threshold: number; mode: string };
+  results: Array<{
+    chunk_id: string;
+    document: { document_id: string; title_ar: string; title_en: string | null };
+    heading_path: string | null;
+    text: string;
+    scores: { dense: number; sparse: number; rerank: number; retrieval: number };
+    models: { embedding: string; reranker: string };
+  }>;
 }

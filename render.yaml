@@ -26,6 +26,20 @@ services:
         fromDatabase:
           name: sawtai-redis
           property: connectionString
+      - key: RAG_ENCODER_MODE
+        value: fallback
+      - key: DOCUMENT_MAX_UPLOAD_BYTES
+        value: "15728640"
+      - key: DOCUMENT_MAX_PAGES
+        value: "250"
+      - key: MINIO_ENDPOINT
+        sync: false
+      - key: MINIO_ROOT_USER
+        sync: false
+      - key: MINIO_ROOT_PASSWORD
+        sync: false
+      - key: MINIO_MEDIA_BUCKET
+        value: sawtai-media
       - key: JWT_SECRET
         generateValue: true
       - key: TENANT_PEPPER

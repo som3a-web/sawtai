@@ -54,7 +54,10 @@ async function request(path: string, init: RequestInit = {}, retry = true): Prom
   }
   if (!response.ok) {
     let detail: string | undefined;
-    try { detail = (await response.json() as { detail?: string }).detail; } catch { detail = undefined; }
+    try {
+      const payload = await response.json() as { detail?: string | { message?: string } };
+      detail = typeof payload.detail === "string" ? payload.detail : payload.detail?.message;
+    } catch { detail = undefined; }
     throw new ApiError(response.status, detail);
   }
   return response;
@@ -98,6 +101,10 @@ export async function postJson(path: string, body: unknown): Promise<Response> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+export async function postForm(path: string, body: FormData): Promise<Response> {
+  return request(path, { method: "POST", body });
 }
 
 export async function deleteJson(path: string): Promise<Response> {

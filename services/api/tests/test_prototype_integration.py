@@ -342,6 +342,102 @@ def test_document_creator_cannot_self_approve() -> None:
         assert denied.status_code == 403
 
 
+def test_uploaded_document_security_processing_and_hybrid_retrieval() -> None:
+    unique_phrase = f"مرجع التحول الدلالي {uuid4()}"
+    with TestClient(app) as client:
+        officer_login = client.post(
+            "/api/v1/auth/token",
+            json={"email": "officer@sawtai.ae", "password": "SawtAI-2026!"},
+        )
+        officer_headers = {"Authorization": f"Bearer {officer_login.json()['access_token']}"}
+        rejected = client.post(
+            "/api/v1/documents/upload",
+            headers=officer_headers,
+            data={"kind": "policy", "title_ar": "ملف نشط مرفوض", "lang": "ar", "version": str(uuid4())},
+            files={"file": ("unsafe.pdf", b"%PDF-1.7\n/JavaScript test", "application/pdf")},
+        )
+        assert rejected.status_code == 422
+        assert rejected.json()["detail"]["code"] == "active_content"
+
+        uploaded = client.post(
+            "/api/v1/documents/upload",
+            headers=officer_headers,
+            data={
+                "kind": "service_guide",
+                "title_ar": "دليل اختبار الرفع الدلالي",
+                "title_en": "Semantic upload integration guide",
+                "lang": "ar",
+                "version": str(uuid4()),
+            },
+            files={
+                "file": (
+                    "semantic-guide.md",
+                    f"# الإجراء المعتمد\n\n{unique_phrase}. تتم المتابعة خلال يوم عمل واحد.".encode(),
+                    "text/markdown",
+                )
+            },
+        )
+        assert uploaded.status_code == 201, uploaded.text
+        payload = uploaded.json()
+        assert payload["ingestion_status"] == "indexed"
+        assert payload["extraction_method"] == "markdown"
+        assert payload["chunks"] >= 1
+        document_id = payload["document_id"]
+        detail = client.get(f"/api/v1/documents/{document_id}", headers=officer_headers).json()
+        assert detail["ingestion_status"] == "indexed"
+        assert detail["embedding_provider"] == "local-hash-fallback-v1"
+
+        approver_login = client.post(
+            "/api/v1/auth/token",
+            json={"email": "approver@sawtai.ae", "password": "SawtAI-2026!"},
+        )
+        approver_headers = {"Authorization": f"Bearer {approver_login.json()['access_token']}"}
+        assert client.post(f"/api/v1/documents/{document_id}/approve", headers=approver_headers).status_code == 200
+        search = client.post(
+            "/api/v1/search/documents",
+            headers=officer_headers,
+            json={"query": unique_phrase},
+        )
+        assert search.status_code == 200, search.text
+        result = next(item for item in search.json()["results"] if item["document"]["document_id"] == document_id)
+        assert result["scores"]["dense"] > 0
+        assert result["scores"]["retrieval"] >= result["scores"]["sparse"]
+        assert result["models"]["embedding"] == "local-hash-fallback-v1"
+        assert search.json()["gate"]["mode"] == "hybrid_dense_sparse_rerank"
+        assert client.delete(f"/api/v1/documents/{document_id}", headers=approver_headers).status_code == 200
+
+
+def test_failed_ingestion_is_audited_and_cannot_be_approved() -> None:
+    with TestClient(app) as client:
+        officer_login = client.post(
+            "/api/v1/auth/token",
+            json={"email": "officer@sawtai.ae", "password": "SawtAI-2026!"},
+        )
+        officer_headers = {"Authorization": f"Bearer {officer_login.json()['access_token']}"}
+        failed = client.post(
+            "/api/v1/documents/upload",
+            headers=officer_headers,
+            data={"kind": "faq", "title_ar": "ملف فارغ من المحتوى", "lang": "ar", "version": str(uuid4())},
+            files={"file": ("empty.md", b"short", "text/markdown")},
+        )
+        assert failed.status_code == 422
+        document_id = failed.json()["detail"]["document_id"]
+        detail = client.get(f"/api/v1/documents/{document_id}", headers=officer_headers).json()
+        assert detail["ingestion_status"] == "failed"
+        assert detail["chunks"] == []
+        assert "enough readable text" in detail["ingestion_error"]
+
+        approver_login = client.post(
+            "/api/v1/auth/token",
+            json={"email": "approver@sawtai.ae", "password": "SawtAI-2026!"},
+        )
+        approver_headers = {"Authorization": f"Bearer {approver_login.json()['access_token']}"}
+        blocked = client.post(f"/api/v1/documents/{document_id}/approve", headers=approver_headers)
+        assert blocked.status_code == 409
+        retry = client.post(f"/api/v1/documents/{document_id}/retry", headers=officer_headers)
+        assert retry.status_code == 422
+
+
 def test_draft_stream_has_grounding_and_completion_events() -> None:
     with TestClient(app) as client:
         login = client.post("/api/v1/auth/token", json={"email": "officer@sawtai.ae", "password": "SawtAI-2026!"})

@@ -384,7 +384,8 @@ async def process_persisted_whatsapp_message(
             message_occurred_at=persisted["occurred_at"],
             citizen_text=persisted["raw_text"],
             language="en" if language == "en" else "ar",
-            retrieval_gate=settings.rag_lexical_gate,
+            retrieval_gate=settings.rag_hybrid_gate,
+            settings=settings,
         )
     case_id = await create_case_from_message(
         session,

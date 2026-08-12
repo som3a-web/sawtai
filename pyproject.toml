@@ -10,8 +10,15 @@ dependencies = [
   "asyncpg==0.30.0",
   "fastapi==0.115.8",
   "httpx==0.28.1",
+  "minio==7.2.15",
+  "Pillow==11.1.0",
+  "pypdf==5.3.0",
+  "pypdfium2==4.30.0",
   "pydantic-settings==2.7.1",
+  "pytesseract==0.3.13",
   "PyJWT==2.10.1",
+  "python-docx==1.1.2",
+  "python-multipart==0.0.20",
   "psycopg[binary]==3.2.4",
   "redis==5.2.1",
   "sqlalchemy[asyncio]==2.0.37",
@@ -59,6 +66,10 @@ python_version = "3.12"
 strict = true
 packages = ["sawtai"]
 mypy_path = "services/api/src"
+
+[[tool.mypy.overrides]]
+module = ["docx.*", "minio.*", "PIL.*", "pypdf.*", "pypdfium2.*", "pytesseract.*"]
+ignore_missing_imports = true
 
 [tool.importlinter]
 root_packages = ["sawtai"]
