@@ -22,6 +22,7 @@ def test_openapi_contains_prototype_routes() -> None:
         "/api/v1/channels/whatsapp/webhook",
         "/api/v1/channels/whatsapp/status",
         "/api/v1/channels/whatsapp/inbox",
+        "/api/v1/channels/whatsapp/replies/{response_id}",
         "/api/v1/channels/whatsapp/replies/{response_id}/approve-and-send",
     }
     with TestClient(app) as client:

@@ -4,7 +4,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sawtai.channels.models import WhatsAppMessage, WhatsAppMetadata
-from sawtai.channels.service import approve_and_deliver_reply, process_whatsapp_message
+from sawtai.channels.service import (
+    approve_and_deliver_reply,
+    process_whatsapp_message,
+    update_whatsapp_reply,
+)
 from sawtai.config import get_settings
 from sawtai.database import session_factory
 from sawtai.main import app
@@ -80,6 +84,17 @@ async def test_whatsapp_message_to_approved_delivery_flow() -> None:
     assert result.message_id is not None
     assert result.response_id is not None
     assert result.status == "draft_ready"
+
+    async with session_factory() as session:
+        updated = await update_whatsapp_reply(
+            session,
+            response_id=result.response_id,
+            tenant_id=TENANT_ID,
+            editor_user_id=USER_ID,
+            body="نشكركم على تواصلكم. يرجى تزويدنا برقم مرجع البلاغ لمتابعة الحالة مع الفريق المختص.",
+        )
+    assert updated.status == "draft"
+    assert updated.edit_distance > 0
 
     async with session_factory() as session:
         delivery = await approve_and_deliver_reply(

@@ -96,3 +96,53 @@ export interface DataRowsData {
   rows: Array<Record<string, unknown>>;
   mode: string;
 }
+
+export interface WhatsAppStatusData {
+  tenant_id: string;
+  configured: boolean;
+  signature_required: boolean;
+  delivery_mode: "simulate" | "live";
+  reply_mode: "off" | "acknowledge" | "draft";
+  voice_ready: boolean;
+}
+
+export interface WhatsAppCitation {
+  seq: number;
+  title_ar: string;
+  title_en: string | null;
+  heading_path: string | null;
+  quoted_text: string;
+  entailment: number;
+}
+
+export interface WhatsAppInboxItem {
+  message_id: string;
+  external_id: string;
+  occurred_at: string;
+  raw_text: string;
+  author_pseudonym: string;
+  lang_primary: string;
+  enrichment_state: number;
+  response_id: string | null;
+  reply_body: string | null;
+  reply_status: "draft" | "pending_approval" | "approved" | "rejected" | "published" | "withdrawn" | null;
+  grounding_score: number | null;
+  abstained: boolean | null;
+  abstain_reason: string | null;
+  policy_flags: string[] | null;
+  published_ref: string | null;
+  reply_created_at: string | null;
+  citations: WhatsAppCitation[];
+}
+
+export interface WhatsAppInboxData {
+  items: WhatsAppInboxItem[];
+  count: number;
+}
+
+export interface WhatsAppDeliveryData {
+  response_id: string;
+  status: string;
+  published_ref: string;
+  simulated: boolean;
+}

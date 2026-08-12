@@ -19,3 +19,13 @@ export async function postJson(path: string, body: unknown): Promise<Response> {
   if (!response.ok) throw new Error(`Request failed: ${response.status}`);
   return response;
 }
+
+export async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+  return response.json() as Promise<T>;
+}

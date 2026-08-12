@@ -86,3 +86,7 @@ class WhatsAppWebhook(BaseModel):
 
 class ReplyApprovalRequest(BaseModel):
     comment: str | None = Field(default=None, max_length=500)
+
+
+class ReplyUpdateRequest(BaseModel):
+    body: str = Field(min_length=10, max_length=4000)

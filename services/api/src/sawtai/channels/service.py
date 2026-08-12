@@ -43,6 +43,14 @@ class ApprovedDelivery:
     simulated: bool
 
 
+@dataclass(frozen=True)
+class UpdatedReply:
+    response_id: UUID
+    body: str
+    status: str
+    edit_distance: int
+
+
 async def list_whatsapp_inbox(
     session: AsyncSession,
     *,
@@ -54,16 +62,20 @@ async def list_whatsapp_inbox(
             text(
                 """
                 SELECT m.message_id, m.external_id, m.occurred_at, m.raw_text,
+                       m.author_pseudonym,
                        m.lang_primary::text, m.enrichment_state,
                        reply.response_id, reply.body AS reply_body,
                        reply.status::text AS reply_status,
                        reply.grounding_score, reply.abstained,
-                       reply.abstain_reason, reply.policy_flags
+                       reply.abstain_reason, reply.policy_flags,
+                       reply.published_ref, reply.created_at AS reply_created_at,
+                       COALESCE(citations.items, '[]'::jsonb) AS citations
                 FROM core.messages m
                 JOIN core.channels c ON c.channel_id = m.channel_id
                 LEFT JOIN LATERAL (
                     SELECT r.response_id, r.body, r.status, r.grounding_score,
-                           r.abstained, r.abstain_reason, r.policy_flags
+                           r.abstained, r.abstain_reason, r.policy_flags,
+                           r.published_ref, r.created_at
                     FROM core.ai_inference_log i
                     JOIN core.responses r ON r.inference_run_id = i.inference_run_id
                     WHERE i.tenant_id = m.tenant_id
@@ -73,6 +85,22 @@ async def list_whatsapp_inbox(
                     ORDER BY i.created_at DESC
                     LIMIT 1
                 ) reply ON true
+                LEFT JOIN LATERAL (
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'seq', rc.seq,
+                            'title_ar', d.title_ar,
+                            'title_en', d.title_en,
+                            'heading_path', dc.heading_path,
+                            'quoted_text', rc.quoted_text,
+                            'entailment', rc.entailment
+                        ) ORDER BY rc.seq
+                    ) AS items
+                    FROM core.response_citations rc
+                    JOIN core.documents d ON d.document_id = rc.document_id
+                    JOIN core.doc_chunks dc ON dc.chunk_id = rc.chunk_id
+                    WHERE rc.response_id = reply.response_id
+                ) citations ON true
                 WHERE m.tenant_id = :tenant_id AND c.code = 'whatsapp'
                 ORDER BY m.occurred_at DESC
                 LIMIT :limit
@@ -82,6 +110,73 @@ async def list_whatsapp_inbox(
         )
     ).mappings().all()
     return [dict(row) for row in rows]
+
+
+async def update_whatsapp_reply(
+    session: AsyncSession,
+    *,
+    response_id: UUID,
+    tenant_id: UUID,
+    editor_user_id: UUID,
+    body: str,
+) -> UpdatedReply:
+    normalized_body = body.strip()
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT response_id, body, status::text
+                FROM core.responses
+                WHERE response_id = :response_id AND tenant_id = :tenant_id
+                FOR UPDATE
+                """
+            ),
+            {"response_id": response_id, "tenant_id": tenant_id},
+        )
+    ).mappings().one_or_none()
+    if row is None:
+        raise LookupError("Reply not found")
+    if row["status"] not in {"draft", "pending_approval"}:
+        raise ValueError(f"Reply cannot be edited from status {row['status']}")
+
+    previous_body = str(row["body"])
+    edit_distance = sum(
+        left != right for left, right in zip(previous_body, normalized_body, strict=False)
+    ) + abs(len(previous_body) - len(normalized_body))
+    await session.execute(
+        text(
+            """
+            UPDATE core.responses
+            SET body = :body, status = 'draft', edited_by = :editor_user_id,
+                edit_distance = :edit_distance, submitted_at = NULL
+            WHERE response_id = :response_id AND tenant_id = :tenant_id
+            """
+        ),
+        {
+            "body": normalized_body,
+            "editor_user_id": editor_user_id,
+            "edit_distance": edit_distance,
+            "response_id": response_id,
+            "tenant_id": tenant_id,
+        },
+    )
+    await write_audit(
+        session,
+        tenant_id=str(tenant_id),
+        actor_user_id=str(editor_user_id),
+        action="response.edit",
+        object_type="response",
+        object_id=str(response_id),
+        before_state={"status": row["status"], "body": previous_body},
+        after_state={"status": "draft", "body": normalized_body},
+    )
+    await session.commit()
+    return UpdatedReply(
+        response_id=response_id,
+        body=normalized_body,
+        status="draft",
+        edit_distance=edit_distance,
+    )
 
 
 async def process_whatsapp_message(

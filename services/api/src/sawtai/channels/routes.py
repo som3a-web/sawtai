@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sawtai.auth.service import UserContext, require
-from sawtai.channels.models import ReplyApprovalRequest, WhatsAppWebhook
+from sawtai.channels.models import ReplyApprovalRequest, ReplyUpdateRequest, WhatsAppWebhook
 from sawtai.channels.security import verify_meta_signature
 from sawtai.channels.service import (
     approve_and_deliver_reply,
@@ -17,6 +17,7 @@ from sawtai.channels.service import (
     list_whatsapp_inbox,
     message_job_payload,
     status_job_payload,
+    update_whatsapp_reply,
 )
 from sawtai.channels.whatsapp import WhatsAppDeliveryError
 from sawtai.config import Settings, get_settings
@@ -153,4 +154,31 @@ async def approve_reply(
         "status": delivered.status,
         "published_ref": delivered.published_ref,
         "simulated": delivered.simulated,
+    }
+
+
+@router.patch("/replies/{response_id}")
+async def update_reply(
+    response_id: UUID,
+    payload: ReplyUpdateRequest,
+    user: UserContext = Depends(require("draft:edit")),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    try:
+        updated = await update_whatsapp_reply(
+            session,
+            response_id=response_id,
+            tenant_id=UUID(user.tenant_id),
+            editor_user_id=UUID(user.user_id),
+            body=payload.body,
+        )
+    except LookupError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    return {
+        "response_id": updated.response_id,
+        "body": updated.body,
+        "status": updated.status,
+        "edit_distance": updated.edit_distance,
     }

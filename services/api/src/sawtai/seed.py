@@ -3,6 +3,7 @@
 import hashlib
 import os
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from sqlalchemy import create_engine, text
@@ -583,12 +584,200 @@ def seed_workflow(connection: object) -> None:
     )
 
 
+def seed_whatsapp_workspace(connection: object) -> None:
+    execute = connection.execute  # type: ignore[attr-defined]
+    encryption_key = os.environ.get(
+        "PII_ENCRYPTION_KEY",
+        "local-only-insecure-pii-encryption-key",
+    )
+    document_id = UUID("00000000-0000-0000-0000-000000000d01")
+    chunk_id = UUID("00000000-0000-0000-0000-000000000e01")
+    samples = (
+        {
+            "key": "waiting",
+            "occurred_at": datetime(2026, 8, 11, 10, 42, tzinfo=UTC),
+            "sender": "971501234501",
+            "text": "السلام عليكم، الحاويات ممتلئة منذ ثلاثة أيام في المنطقة الصناعية. متى سيتم جمع النفايات؟",
+            "body": (
+                "وعليكم السلام، نشكركم على تواصلكم. تستقبل البلدية بلاغات تأخر جمع "
+                "النفايات على مدار الساعة، ويُسجّل البلاغ فور استلامه ويُحال إلى الفريق "
+                "المختص. يرجى تزويدنا برقم مرجع البلاغ لمتابعة الحالة."
+            ),
+            "status": "draft",
+            "score": 0.95,
+            "abstained": False,
+            "published_ref": None,
+        },
+        {
+            "key": "published",
+            "occurred_at": datetime(2026, 8, 11, 9, 18, tzinfo=UTC),
+            "sender": "971501234502",
+            "text": "قدمت بلاغاً عن تأخر جمع النفايات وأرغب بمتابعة الحالة.",
+            "body": (
+                "نشكركم على تواصلكم. يرجى تزويدنا برقم مرجع الطلب، وسيتولى الفريق "
+                "المختص متابعة الحالة وفق جدول الخدمة المعتمد."
+            ),
+            "status": "published",
+            "score": 0.92,
+            "abstained": False,
+            "published_ref": "simulated:seed-published",
+        },
+        {
+            "key": "review",
+            "occurred_at": datetime(2026, 8, 10, 16, 5, tzinfo=UTC),
+            "sender": "971501234503",
+            "text": "أريد معرفة تفاصيل معاملة لا تتعلق بخدمات البلدية.",
+            "body": "",
+            "status": "draft",
+            "score": 0.0,
+            "abstained": True,
+            "published_ref": None,
+        },
+    )
+    for sample in samples:
+        message_id = stable_uuid(f"whatsapp-message-{sample['key']}")
+        inference_id = stable_uuid(f"whatsapp-inference-{sample['key']}")
+        response_id = stable_uuid(f"whatsapp-response-{sample['key']}")
+        pseudonym = hashlib.sha256(str(sample["sender"]).encode()).hexdigest()[:32]
+        digest = hashlib.sha256(f"whatsapp:{sample['text']}".encode()).digest()
+        simhash = int.from_bytes(digest[:8], "big", signed=True)
+        execute(
+            text(
+                """
+                INSERT INTO restricted.pii_vault (
+                    author_pseudonym, tenant_id, native_id_enc, first_seen_at
+                ) VALUES (
+                    :pseudonym, :tenant_id,
+                    pgp_sym_encrypt(:sender, :encryption_key), :occurred_at
+                ) ON CONFLICT (author_pseudonym) DO NOTHING
+                """
+            ),
+            {
+                "pseudonym": pseudonym,
+                "tenant_id": TENANT_ID,
+                "sender": sample["sender"],
+                "encryption_key": encryption_key,
+                "occurred_at": sample["occurred_at"],
+            },
+        )
+        execute(
+            text(
+                """
+                INSERT INTO core.messages (
+                    message_id, tenant_id, source_id, channel_id, external_id,
+                    occurred_at, author_pseudonym, raw_text, norm_text,
+                    lang_primary, code_switch_ratio, dialect, content_hash,
+                    simhash, data_tier, engagement, enrichment_state
+                ) VALUES (
+                    :message_id, :tenant_id, :source_id, :channel_id, :external_id,
+                    :occurred_at, :pseudonym, :raw_text, :raw_text,
+                    'ar', 0, 'gulf', :content_hash, :simhash, 'c2_personal',
+                    '{"message_type":"text","phone_number_id":"demo-phone"}', 15
+                ) ON CONFLICT (tenant_id, content_hash, occurred_at) DO NOTHING
+                """
+            ),
+            {
+                "message_id": message_id,
+                "tenant_id": TENANT_ID,
+                "source_id": SOURCES["whatsapp"],
+                "channel_id": CHANNELS["whatsapp"],
+                "external_id": f"wamid.seed-{sample['key']}",
+                "occurred_at": sample["occurred_at"],
+                "pseudonym": pseudonym,
+                "raw_text": sample["text"],
+                "content_hash": digest,
+                "simhash": simhash,
+            },
+        )
+        execute(
+            text(
+                """
+                INSERT INTO core.ai_inference_log (
+                    inference_run_id, tenant_id, task, model_name, model_version,
+                    prompt_version, provider, input_ref, latency_ms, status, error_code
+                ) VALUES (
+                    :inference_id, :tenant_id, 'whatsapp_reply', 'grounded-template',
+                    'v1', 'whatsapp-grounded-v1', 'local', CAST(:input_ref AS jsonb),
+                    184, :inference_status, :error_code
+                ) ON CONFLICT (inference_run_id) DO NOTHING
+                """
+            ),
+            {
+                "inference_id": inference_id,
+                "tenant_id": TENANT_ID,
+                "input_ref": (
+                    '{"message_id":"'
+                    + str(message_id)
+                    + '","occurred_at":"'
+                    + cast(datetime, sample["occurred_at"]).isoformat()
+                    + '"}'
+                ),
+                "inference_status": "abstained" if sample["abstained"] else "ok",
+                "error_code": "no_supporting_source" if sample["abstained"] else None,
+            },
+        )
+        execute(
+            text(
+                """
+                INSERT INTO core.responses (
+                    response_id, tenant_id, kind, lang, audience, body, status,
+                    generated_by_model, model_version, prompt_version,
+                    inference_run_id, grounding_score, policy_flags, abstained,
+                    abstain_reason, approved_by, approved_at, published_at, published_ref
+                ) VALUES (
+                    :response_id, :tenant_id, 'reply', 'ar', 'citizen', :body,
+                    CAST(:status AS core.response_status), 'grounded-template', 'v1',
+                    'whatsapp-grounded-v1', :inference_id, :score, '[]', :abstained,
+                    :abstain_reason, :approved_by, :approved_at, :published_at,
+                    :published_ref
+                ) ON CONFLICT (response_id) DO NOTHING
+                """
+            ),
+            {
+                "response_id": response_id,
+                "tenant_id": TENANT_ID,
+                "body": sample["body"],
+                "status": sample["status"],
+                "inference_id": inference_id,
+                "score": sample["score"],
+                "abstained": sample["abstained"],
+                "abstain_reason": "no_supporting_source" if sample["abstained"] else None,
+                "approved_by": USER_ID if sample["status"] == "published" else None,
+                "approved_at": sample["occurred_at"] if sample["status"] == "published" else None,
+                "published_at": sample["occurred_at"] if sample["status"] == "published" else None,
+                "published_ref": sample["published_ref"],
+            },
+        )
+        if not sample["abstained"]:
+            execute(
+                text(
+                    """
+                    INSERT INTO core.response_citations (
+                        response_id, seq, claim_text, chunk_id, document_id,
+                        quoted_text, start_char, end_char, entailment
+                    ) SELECT :response_id, 1, :body, :chunk_id, :document_id,
+                             dc.text, 0, length(dc.text), :score
+                    FROM core.doc_chunks dc WHERE dc.chunk_id = :chunk_id
+                    ON CONFLICT (response_id, seq) DO NOTHING
+                    """
+                ),
+                {
+                    "response_id": response_id,
+                    "body": sample["body"],
+                    "chunk_id": chunk_id,
+                    "document_id": document_id,
+                    "score": sample["score"],
+                },
+            )
+
+
 def main() -> None:
     engine = create_engine(database_url())
     with engine.begin() as connection:
         seed_static(connection)
         seed_messages(connection)
         seed_workflow(connection)
+        seed_whatsapp_workspace(connection)
     print("SawtAI demo seed complete")
 
 

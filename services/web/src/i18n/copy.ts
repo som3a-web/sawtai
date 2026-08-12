@@ -1,6 +1,7 @@
 export const copy = {
   ar: {
     overview: "نظرة عامة",
+    whatsapp: "مركز واتساب",
     voice: "صوت المتعامل",
     draft: "استوديو الصياغة",
     crisis: "غرفة الأزمات",
@@ -30,6 +31,7 @@ export const copy = {
   },
   en: {
     overview: "Overview",
+    whatsapp: "WhatsApp Hub",
     voice: "Voice Explorer",
     draft: "Draft Studio",
     crisis: "Crisis Room",
