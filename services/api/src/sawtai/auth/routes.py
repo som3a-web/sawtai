@@ -94,7 +94,7 @@ async def token(
             )
             await session.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    access_token, refresh_token, expires_in = await issue_token_pair(user, settings)
+    access_token, refresh_token, expires_in = await issue_token_pair(user, settings, session)
     set_refresh_cookie(response, refresh_token, settings)
     await session.execute(
         text("UPDATE core.users SET last_login_at = now() WHERE user_id = :user_id"),
@@ -131,6 +131,7 @@ async def refresh(
         session=session,
         settings=settings,
     )
+    await session.commit()
     set_refresh_cookie(response, new_refresh, settings)
     return {
         "access_token": access_token,
@@ -145,8 +146,10 @@ async def logout(
     response: Response,
     refresh_token: Annotated[str | None, Cookie(alias=REFRESH_COOKIE)] = None,
     settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
 ) -> None:
-    await revoke_refresh_token(refresh_token, settings)
+    await revoke_refresh_token(refresh_token, settings, session)
+    await session.commit()
     response.delete_cookie(REFRESH_COOKIE, path="/api/v1/auth")
 
 

@@ -1,7 +1,6 @@
 """Password authentication, JWT sessions, and role-based authorisation."""
 
 import hashlib
-import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -13,10 +12,10 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sawtai.audit.service import write_audit
 from sawtai.config import Settings, get_settings
 from sawtai.database import get_session
 
@@ -161,7 +160,11 @@ async def authenticate_user(
     )
 
 
-async def issue_token_pair(user: UserContext, settings: Settings) -> tuple[str, str, int]:
+async def issue_token_pair(
+    user: UserContext,
+    settings: Settings,
+    session: AsyncSession,
+) -> tuple[str, str, int]:
     access, _, _ = _encode_token(
         user_id=user.user_id,
         tenant_id=user.tenant_id,
@@ -177,15 +180,18 @@ async def issue_token_pair(user: UserContext, settings: Settings) -> tuple[str, 
         lifetime=timedelta(days=settings.refresh_token_days),
         settings=settings,
     )
-    redis = Redis.from_url(settings.redis_url, decode_responses=True)
-    try:
-        await redis.set(
-            f"auth:refresh:{refresh_id}",
-            json.dumps({"hash": hashlib.sha256(refresh.encode()).hexdigest(), "user_id": user.user_id}),
-            ex=max(1, int((expires_at - datetime.now(UTC)).total_seconds())),
-        )
-    finally:
-        await redis.aclose()
+    await write_audit(
+        session,
+        tenant_id=user.tenant_id,
+        actor_user_id=user.user_id,
+        action="auth.refresh.issue",
+        object_type="auth_session",
+        object_id=refresh_id,
+        after_state={
+            "token_hash": hashlib.sha256(refresh.encode()).hexdigest(),
+            "expires_at": expires_at.isoformat(),
+        },
+    )
     return access, refresh, settings.access_token_minutes * 60
 
 
@@ -197,14 +203,31 @@ async def rotate_refresh_token(
 ) -> tuple[UserContext, str, str, int]:
     payload = decode_token(token, expected_type="refresh", settings=settings)
     refresh_id = str(payload["jti"])
-    redis = Redis.from_url(settings.redis_url, decode_responses=True)
-    try:
-        stored = await redis.get(f"auth:refresh:{refresh_id}")
-        if stored is None or json.loads(stored).get("hash") != hashlib.sha256(token.encode()).hexdigest():
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session was revoked")
-        await redis.delete(f"auth:refresh:{refresh_id}")
-    finally:
-        await redis.aclose()
+    ledger = (
+        await session.execute(
+            text(
+                """
+                SELECT action, after_state
+                FROM core.audit_log
+                WHERE tenant_id = :tenant_id AND object_id = :session_id
+                  AND object_type = 'auth_session'
+                ORDER BY occurred_at DESC, audit_id DESC
+                LIMIT 1
+                """
+            ),
+            {
+                "tenant_id": UUID(str(payload["tenant_id"])),
+                "session_id": UUID(refresh_id),
+            },
+        )
+    ).mappings().one_or_none()
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    if (
+        ledger is None
+        or ledger["action"] != "auth.refresh.issue"
+        or ledger["after_state"].get("token_hash") != token_hash
+    ):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session was revoked")
     user = await load_user_context(
         session,
         user_id=UUID(str(payload["sub"])),
@@ -212,22 +235,39 @@ async def rotate_refresh_token(
     )
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account is unavailable")
-    access, refresh, expires_in = await issue_token_pair(user, settings)
+    await write_audit(
+        session,
+        tenant_id=user.tenant_id,
+        actor_user_id=user.user_id,
+        action="auth.refresh.revoke",
+        object_type="auth_session",
+        object_id=refresh_id,
+        after_state={"reason": "rotated"},
+    )
+    access, refresh, expires_in = await issue_token_pair(user, settings, session)
     return user, access, refresh, expires_in
 
 
-async def revoke_refresh_token(token: str | None, settings: Settings) -> None:
+async def revoke_refresh_token(
+    token: str | None,
+    settings: Settings,
+    session: AsyncSession,
+) -> None:
     if not token:
         return
     try:
         payload = decode_token(token, expected_type="refresh", settings=settings)
     except HTTPException:
         return
-    redis = Redis.from_url(settings.redis_url, decode_responses=True)
-    try:
-        await redis.delete(f"auth:refresh:{payload['jti']}")
-    finally:
-        await redis.aclose()
+    await write_audit(
+        session,
+        tenant_id=str(payload["tenant_id"]),
+        actor_user_id=str(payload["sub"]),
+        action="auth.refresh.revoke",
+        object_type="auth_session",
+        object_id=str(payload["jti"]),
+        after_state={"reason": "logout"},
+    )
 
 
 async def get_current_user(
